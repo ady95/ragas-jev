@@ -10,7 +10,7 @@
 | metric / 항목 | 가장 좋은 시스템 | Hybrid | 비고 |
 |---|---|---|---|
 | Context Precision: 질문만 보는 판정 (MIRACL, 관련 18%) | **Hybrid** (Spearman 0.681 / 0.567) | 1위 | RAGAS는 정의가 다른 `ContextRelevance`만 가능 (0.111 / 0.253) |
-| Context Precision: reference 기반 (관련 44%) | **RAGAS** (AP Pearson 0.638 / 0.696) | 기본 보정 최하위 (0.390 / 0.516). **재보정하면 0.558 / 0.614** | RAGAS는 reference를 보고 판정한다. 기본 보정은 분포가 달라 손해 (5.1절) |
+| Context Precision: reference 기반 (관련 44%) | **JEV v3 / Hybrid v3** (AP Kendall 0.518~0.537 / 0.523~0.545) | v3 + 재보정이 순위 일치·오차·chunk κ 1위 | reference를 보는 v3 문항으로 RAGAS(0.459 / 0.518)를 따라잡았다. 영어 AP Pearson만 RAGAS가 약간 높다 (0.696 vs 0.672). v2 + 기본 보정은 분포 차이로 최하위 (5.1절) |
 | Faithfulness (RAGTruth) | **Hybrid** (AUROC 0.830, F1 0.790) | 1위 | RAGAS 0.790 / 0.752, LLM Judge 0.821 / 0.764 |
 | Context Recall | **RAGAS** (Pearson 0.909 / 0.944) | 2~3위 (0.903 / 0.938) | 정답을 reference 문장 단위로 만들어 RAGAS 방식에 유리하다 |
 | Answer Relevancy | **JEV = Hybrid** (WikiEval 0.92, 무관 문장 삽입 0.98 / 0.95) | 1위 | LLM Judge 0.78 / 0.84 / 0.78, RAGAS 0.72 / 0.61 / 0.49 |
@@ -19,8 +19,9 @@
 
 **결론**
 
-- Hybrid RAGAS-JEV는 Faithfulness, Answer Relevancy, 질문만 보는 Context Precision에서 1위이고, 판정용 LLM 호출은 RAGAS·LLM Judge의 0~40%다. 설계방향 문서의 구조("LLM은 문제를 나누고, JEV는 판단하고, 프로그램은 점수를 계산한다")가 품질과 비용 양쪽에서 성립한다.
-- RAGAS는 **reference 답변을 쓰는 metric**(Context Precision, Context Recall)에서 앞선다. reference라는 추가 정보를 쓰는 데다, Recall은 정답 정의도 RAGAS 방식에 가깝다.
+- Hybrid RAGAS-JEV는 Faithfulness, Answer Relevancy, Context Precision(질문만 보는 경우와 reference를 보는 경우 모두)에서 1위이고, 판정용 LLM 호출은 RAGAS·LLM Judge의 0~40%다. 설계방향 문서의 구조("LLM은 문제를 나누고, JEV는 판단하고, 프로그램은 점수를 계산한다")가 품질과 비용 양쪽에서 성립한다.
+- reference 기반 Context Precision에서 RAGAS가 앞섰던 것은 **reference라는 정보 차이** 때문이었다. JEV에게도 reference를 보여 주는 v3 문항을 쓰면, 한국어는 LLM 호출 없이 RAGAS보다 좋다. v3를 Context Precision 기본 문항으로 바꿨다 (reference가 없으면 v2).
+- Context Recall은 RAGAS가 앞선다. 정답 정의(reference 문장 단위)가 RAGAS 방식에 가깝다.
 - **보정은 데이터 분포에 의존한다는 것이 실제로 확인됐다.** 관련 passage 비율이 다른 세트에 기본 보정을 쓰면 Hybrid가 가장 나빴고, 그 세트의 라벨로 재보정하면 LLM Judge 수준으로 회복했다. 서비스 도메인에서는 [도메인 재보정](../도메인_재보정_가이드.md)이 필수다.
 
 ## 2. 비교 대상
@@ -42,7 +43,7 @@
 | 이 프로젝트 | RAGAS 대응 | 조건 |
 |---|---|---|
 | Context Precision (MIRACL) | `ContextRelevance` | MIRACL에는 reference가 없다. `ContextRelevance`는 contexts **전체**가 질문에 관련되는지를 0/0.5/1로 매기는 metric이라 precision과 정의가 다르다 |
-| Context Precision (reference 세트) | `ContextPrecision` (reference 사용) | 정의가 같다. 단 RAGAS는 reference를 보고, 이 프로젝트의 문항은 질문만 본다 |
+| Context Precision (reference 세트) | `ContextPrecision` (reference 사용) | 정의가 같다. 이 프로젝트는 질문만 보는 v2와 reference도 보는 v3를 모두 비교했다 |
 | Faithfulness | `Faithfulness` | 같은 개념 |
 | Context Recall | `ContextRecall` | 같은 개념. RAGAS는 reference **문장**마다 판정한다 |
 | Answer Relevancy | `AnswerRelevancy` | 임베딩이 필요한데 프록시에 없어 **로컬 다국어 임베딩**(`paraphrase-multilingual-MiniLM-L12-v2`)으로 실행했다. 공식 구성(OpenAI 임베딩)보다 불리할 수 있다 |
@@ -126,6 +127,11 @@ RAGAS AnswerRelevancy는 로컬 다국어 임베딩(paraphrase-multilingual-Mini
 
 정답은 사람 라벨로 계산한 AP다. RAGAS는 context마다 판정해 AP를 낸다. 나머지 시스템은 p ≥ 0.5를 판정으로 보고 같은 공식으로 AP를 계산했다 ([run_cp_reference.py](../../benchmark/run_cp_reference.py)).
 
+- **v2 문항** (`chunk_relevance.v2`): 질문만 보고 "이 passage가 질문에 답하는 정보를 담고 있는가"를 묻는다.
+- **v3 문항** (`chunk_relevance.v3`): reference도 함께 보고 "이 passage에 reference 답변에 쓰인 정보가 있는가"를 묻는다. RAGAS `ContextPrecision`과 같은 정보를 쓴다.
+- **Hybrid (기본 보정)**: Phase 1 MIRACL 데이터 중 이 세트의 질문을 뺀 unit으로 학습한 보정을 썼다 (v2).
+- **재보정**: 이 세트의 라벨로 질문 단위 2-fold 재보정을 했다. 한쪽 절반의 질문으로 학습한 보정을 다른 절반에 적용한다. [도메인 재보정](../도메인_재보정_가이드.md) 절차(`ragas_jev.scoring.recalibration`)를 그대로 썼다.
+
 ##### 한국어 (200 samples)
 
 | 시스템 | AP Pearson / Spearman / Kendall | AP MAE | soft precision Pearson / MAE | chunk F1 / κ |
@@ -135,7 +141,12 @@ RAGAS AnswerRelevancy는 로컬 다국어 임베딩(paraphrase-multilingual-Mini
 | JEV만 | 0.550 / 0.544 / 0.448 | 0.141 | 0.527 / 0.143 | 0.795 / 0.610 |
 | Hybrid (기본 보정 + routing) | 0.390 / 0.408 / 0.332 | 0.223 | 0.474 / 0.166 | 0.735 / 0.576 |
 | Hybrid (이 도메인 라벨로 재보정 + routing) | 0.558 / 0.579 / 0.475 | 0.137 | 0.529 / 0.116 | 0.808 / 0.653 |
-Hybrid 재보정: 재판정 unit 7.6%, 샘플당 LLM 호출 0.28
+| LLM Judge v3 (reference 사용) | 0.666 / 0.594 / 0.502 | 0.119 | 0.550 / 0.151 | 0.851 / 0.701 |
+| JEV만 v3 (reference 사용) | 0.674 / 0.645 / 0.518 | 0.123 | 0.614 / 0.132 | 0.843 / 0.697 |
+| Hybrid v3 (reference 사용, 재보정 + routing) | 0.644 / 0.650 / 0.537 | 0.117 | 0.610 / 0.109 | 0.851 / 0.723 |
+- Hybrid (기본 보정 + routing): 재판정 unit 12.2%, 샘플당 LLM 호출 0.43
+- Hybrid (이 도메인 라벨로 재보정 + routing): 재판정 unit 7.6%, 샘플당 LLM 호출 0.28
+- Hybrid v3 (reference 사용, 재보정 + routing): 재판정 unit 7.4%, 샘플당 LLM 호출 0.28
 
 Hybrid: 재판정 unit 12.2%, 샘플당 LLM 호출 0.43 (보정 학습 unit 2596개, 이 세트의 질문 제외). RAGAS: 샘플당 LLM 호출 5 (context마다 1), p50 지연 21.2초, 오류 0
 
@@ -148,12 +159,14 @@ Hybrid: 재판정 unit 12.2%, 샘플당 LLM 호출 0.43 (보정 학습 unit 2596
 | JEV만 | 0.574 / 0.562 / 0.431 | 0.183 | 0.352 / 0.168 | 0.721 / 0.505 |
 | Hybrid (기본 보정 + routing) | 0.516 / 0.502 / 0.392 | 0.202 | 0.319 / 0.161 | 0.709 / 0.543 |
 | Hybrid (이 도메인 라벨로 재보정 + routing) | 0.614 / 0.615 / 0.477 | 0.169 | 0.329 / 0.151 | 0.740 / 0.561 |
-Hybrid 재보정: 재판정 unit 9.3%, 샘플당 LLM 호출 0.33
+| LLM Judge v3 (reference 사용) | 0.622 / 0.566 / 0.474 | 0.138 | 0.412 / 0.170 | 0.829 / 0.666 |
+| JEV만 v3 (reference 사용) | 0.672 / 0.639 / 0.523 | 0.122 | 0.508 / 0.137 | 0.828 / 0.684 |
+| Hybrid v3 (reference 사용, 재보정 + routing) | 0.672 / 0.646 / 0.545 | 0.115 | 0.382 / 0.136 | 0.830 / 0.694 |
+- Hybrid (기본 보정 + routing): 재판정 unit 9.0%, 샘플당 LLM 호출 0.35
+- Hybrid (이 도메인 라벨로 재보정 + routing): 재판정 unit 9.3%, 샘플당 LLM 호출 0.33
+- Hybrid v3 (reference 사용, 재보정 + routing): 재판정 unit 12.0%, 샘플당 LLM 호출 0.42
 
 Hybrid: 재판정 unit 9.0%, 샘플당 LLM 호출 0.35 (보정 학습 unit 1170개, 이 세트의 질문 제외). RAGAS: 샘플당 LLM 호출 5 (context마다 1), p50 지연 19.0초, 오류 0
-
-- **Hybrid (기본 보정)**: Phase 1 MIRACL 데이터 중 이 세트의 질문을 뺀 unit으로 학습한 보정을 썼다.
-- **Hybrid (재보정)**: 이 세트의 라벨로 질문 단위 2-fold 재보정을 했다. 한쪽 절반의 질문으로 학습한 보정을 다른 절반에 적용한다. [도메인 재보정](../도메인_재보정_가이드.md) 절차(`ragas_jev.scoring.recalibration`)를 그대로 썼다.
 
 ### 4.2 효율
 
@@ -192,10 +205,13 @@ Hybrid: 재판정 unit 9.0%, 샘플당 LLM 호출 0.35 (보정 학습 unit 1170�
 
 **reference 기반 판정**
 
-- 정의를 맞추면 **RAGAS가 가장 좋다** (AP Pearson 0.638 / 0.696). RAGAS는 reference를 보고 "이 context가 reference를 만드는 데 쓰였는가"를 판정하므로, reference가 없는 이 프로젝트의 문항(질문만 봄)보다 정보가 많다. 대신 LLM 호출이 샘플당 5회다.
-- JEV만과 LLM Judge는 한국어에서 비슷하고(0.550 vs 0.559), 영어에서는 LLM Judge가 낫다(0.574 vs 0.654).
-- **기본 보정을 쓴 Hybrid가 가장 나쁘다** (0.390 / 0.516). 보정을 학습한 MIRACL 데이터는 관련 passage가 18%인데, 이 세트는 44%다. 보정이 JEV p를 크게 낮춰(한국어 p 0.9 → 약 0.36) 관련 passage 상당수가 무관으로 판정됐다. Phase 5 리포트 5.3절에서 경고한 "보정이 라벨 기본 비율을 학습한다"는 문제가 실제로 드러났다.
-- **이 세트의 라벨로 재보정하면 회복한다.** 한국어 AP Pearson 0.390 → 0.558(LLM Judge와 같은 수준), chunk κ 0.576 → 0.653(LLM Judge 0.623보다 높음), 샘플당 LLM 호출 0.43 → 0.28. 영어도 0.516 → 0.614로 오른다.
+- **v2 문항(질문만)에서는 RAGAS가 가장 좋다** (AP Pearson 0.638 / 0.696). RAGAS는 reference를 보고 "이 context가 reference를 만드는 데 쓰였는가"를 판정하므로 정보가 더 많다.
+- **v3 문항으로 JEV에게도 reference를 보여 주면 격차가 사라진다.** JEV만 v3의 AP Pearson은 0.674 / 0.672로, 한국어는 RAGAS보다 높고 영어는 0.024 낮다. 순위 일치(Kendall 0.518 / 0.523)와 오차(MAE 0.123 / 0.122)는 두 언어 모두 RAGAS와 같거나 낫다. JEV만이라 판정용 LLM 호출은 0회다 (RAGAS는 5회).
+- **Hybrid v3(재보정 + routing)**는 순위 일치(Kendall 0.537 / 0.545), 오차(MAE 0.117 / 0.115), chunk κ(0.723 / 0.694)에서 모든 시스템 중 1위다. 샘플당 LLM 호출은 0.28 / 0.42다.
+- LLM Judge도 v3로 좋아진다 (0.559 → 0.666 / 0.654 → 0.622). reference가 있으면 쓰는 것이 판정자와 무관하게 유리하다.
+- **v2 + 기본 보정을 쓴 Hybrid가 가장 나쁘다** (0.390 / 0.516). 보정을 학습한 MIRACL 데이터는 관련 passage가 18%인데, 이 세트는 44%다. 보정이 JEV p를 크게 낮춰(한국어 p 0.9 → 약 0.36) 관련 passage 상당수가 무관으로 판정됐다. Phase 5 리포트 5.3절에서 경고한 "보정이 라벨 기본 비율을 학습한다"는 문제가 실제로 드러났다. 이 세트 라벨로 재보정하면 0.558 / 0.614로 회복한다.
+
+**결정**: Context Precision 기본 문항을 `chunk_relevance.v3`로 바꿨다. reference가 없는 샘플은 v2로 판정하고, 결과의 `question_id`에 실제 문항이 기록된다. 기본 보정 파일에는 v3 보정이 없으므로 v3는 JEV 원래 확률을 쓴다. 보정하려면 도메인 재보정이 필요하다.
 
 ### 5.2 Faithfulness
 
@@ -244,11 +260,11 @@ Hybrid: 재판정 unit 9.0%, 샘플당 LLM 호출 0.35 (보정 학습 unit 1170�
 | 도메인 재보정 절차 | **완료.** `ragas-jev calibration sample / fit` ([가이드](../도메인_재보정_가이드.md)). 4.1절에서 효과 확인 |
 | reference가 있는 데이터로 Context Precision 재비교 | **완료** (4.1절). Allganize 대신 Phase 3 recall 세트 사용 |
 | RAGAS Answer Relevancy 추가 | **완료** (로컬 임베딩). 5.4절 |
+| reference를 쓰는 Context Precision 문항 | **완료.** `chunk_relevance.v3`, 기본 문항으로 채택 (4.1, 5.1절) |
 
 남은 제안:
 
-1. **reference를 쓰는 Context Precision 문항 (`chunk_relevance.v3`)**: reference가 있는 데이터에서는 "이 passage가 reference의 내용을 담고 있는가"를 묻는 문항을 추가하면 RAGAS와 같은 정보로 판정할 수 있다. RAGAS와의 AP 차이가 줄어드는지 확인한다.
-2. **전문 도메인 검증**: 서비스 도메인 데이터로 재보정하고, 이 벤치마크를 다시 돌린다 (보안·법무 검토 후).
+1. **전문 도메인 검증**: 서비스 도메인 데이터로 재보정하고(v3 보정 포함), 이 벤치마크를 다시 돌린다. 서비스 데이터 표본과 보안·법무 검토(국외 API 전송)가 먼저 필요하다.
 
 ## 8. 재현 방법
 
@@ -266,6 +282,8 @@ uv run python benchmark/prepare_cp_reference.py --lang en
 uv run --group benchmark python benchmark/run_ragas_baseline.py --only context_precision
 uv run python benchmark/run_phase1.py --datasets cp_ref_miracl_ko cp_ref_miracl_en --chunk-question chunk_relevance.v2 \
   --repeats 1 --llm-judge --summary .cache/phase1/summary_cp_ref.json
+uv run python benchmark/run_phase1.py --datasets cp_ref_miracl_ko cp_ref_miracl_en --chunk-question chunk_relevance.v3 \
+  --repeats 1 --llm-judge --summary .cache/phase1/summary_cp_ref_v3.json
 uv run python benchmark/run_cp_reference.py
 
 # RAGAS Answer Relevancy (로컬 임베딩)

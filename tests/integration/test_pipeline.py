@@ -160,3 +160,14 @@ async def test_numeric_check_flags_numbers_missing_from_contexts():
 async def test_source_span_is_kept_on_units():
     result = await _evaluator().evaluate_sample(SAMPLE, ("faithfulness",))
     assert all(r.unit.source_span and r.unit.source_span in SAMPLE.answer for r in result.units)
+
+
+async def test_chunk_relevance_v3_uses_reference_and_falls_back_without_it():
+    judge = _RecordingJudge()
+    evaluator = Evaluator(judge, SentenceSplitExtractor(), chunk_relevance_version="chunk_relevance.v3")
+    with_ref = await evaluator.evaluate_sample(SAMPLE, ("context_precision",))
+    assert judge.states[-1]["reference"] == SAMPLE.reference
+    assert {r.decision.question_id for r in with_ref.units} == {"chunk_relevance.v3"}
+    no_ref = await evaluator.evaluate_sample(SAMPLE.model_copy(update={"reference": None}), ("context_precision",))
+    assert "reference" not in judge.states[-1]
+    assert {r.decision.question_id for r in no_ref.units} == {"chunk_relevance.v2"}
