@@ -126,3 +126,26 @@ def percentile(values: Sequence[float], q: float) -> float:
     k = (len(ordered) - 1) * q
     lo, hi = math.floor(k), math.ceil(k)
     return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
+
+
+def kendall_tau(x: Sequence[float], y: Sequence[float]) -> float | None:
+    """Kendall tau-b (ties handled); O(n^2), fine for a few thousand points."""
+    n = len(x)
+    if n < 2:
+        return None
+    concordant = discordant = ties_x = ties_y = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx, dy = x[i] - x[j], y[i] - y[j]
+            if dx == 0 and dy == 0:
+                continue
+            if dx == 0:
+                ties_x += 1
+            elif dy == 0:
+                ties_y += 1
+            elif (dx > 0) == (dy > 0):
+                concordant += 1
+            else:
+                discordant += 1
+    denom = math.sqrt((concordant + discordant + ties_x) * (concordant + discordant + ties_y))
+    return (concordant - discordant) / denom if denom else None

@@ -17,7 +17,9 @@ ragas-jev = "ragas_jev.cli:app"
 
 [dependency-groups]
 benchmark = [
+    "langchain-community<0.4",
     "pyarrow>=25.0.1",
+    "ragas>=0.4.3",
 ]
 dev = [
     "pytest>=8",

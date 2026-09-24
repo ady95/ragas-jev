@@ -45,7 +45,7 @@ uv run pytest            # 오프라인 테스트 (unit / contract / integration
 uv run pytest -m live    # 실제 JEV API 호출 (합성 데이터)
 ```
 
-## 현재 상태 (Phase 5)
+## 현재 상태 (Phase 6)
 
 | 구성 요소 | 상태 |
 |---|---|
@@ -62,3 +62,4 @@ uv run pytest -m live    # 실제 JEV API 호출 (합성 데이터)
 | Phase 3 검증 | 완료: [리포트](docs/reports/phase3_context_recall.md) |
 | Phase 4 검증 | 완료: [리포트](docs/reports/phase4_answer_relevancy.md) |
 | Phase 5 검증 | 완료: [리포트](docs/reports/phase5_routing_calibration.md) |
+| Phase 6 벤치마크 | 완료: [리포트](docs/reports/phase6_benchmark.md): RAGAS / LLM Judge / JEV / Hybrid 비교 |
