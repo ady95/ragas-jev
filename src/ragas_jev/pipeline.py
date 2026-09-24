@@ -125,6 +125,7 @@ class Evaluator:
 
     async def evaluate_sample(self, sample: RagSample, metrics: tuple[str, ...] = METRICS) -> SampleResult:
         result = SampleResult(sample_id=sample.sample_id, evaluation_model=self._model_info())
+        result.evaluation_model["lang"] = self._lang(sample)
         if self.pii_masking:
             try:
                 sample, pii_report = mask_sample(sample, self.custom_pii_terms)

@@ -189,20 +189,55 @@ def bench_context_recall() -> dict:
     return out
 
 
+AR_DATASETS = ("relevancy_wikieval", "relevancy_miracl_ko", "relevancy_miracl_en")
+AR_PAIRS = {
+    "relevancy_wikieval": [("good", "poor"), ("good", "wrong")],
+    "relevancy_miracl_ko": [("base", "offtopic"), ("base", "nonanswer"), ("base", "wrong")],
+    "relevancy_miracl_en": [("base", "offtopic"), ("base", "nonanswer"), ("base", "wrong")],
+}
+
+
 def bench_answer_relevancy() -> dict:
-    """RAGAS AnswerRelevancy needs embeddings (not available); Hybrid = JEV (no routing for this metric)."""
+    """Pairwise comparisons of variant answers. Hybrid = JEV (no routing for this metric).
+
+    ragas AnswerRelevancy uses a local multilingual SentenceTransformer (the proxy has no embeddings).
+    """
     tags = {"jev": "jev.statement_relevance.v2.answer_relevance_scale.v2", "llm": "llm-gpt-6-sol.statement_relevance.v2.noscale"}
+    scores: dict[str, dict[str, float]] = {s: {} for s in ("ragas", "llm", "jev")}
+    labels: dict[str, dict] = {}
+    for ds in AR_DATASETS:
+        _, ds_labels = run_phase4.load(ds)
+        labels.update({sid: {**lab, "dataset": ds} for sid, lab in ds_labels.items()})
+        for system, tag in tags.items():
+            for r in map(json.loads, (Path(".cache/phase4") / f"{ds}.{tag}.jsonl").open(encoding="utf-8")):
+                value = r["generation"].get("answer_relevancy")
+                if value is not None:
+                    scores[system][r["sample_id"]] = value
+        path = OUT / f"ragas.{ds}.answer_relevancy.jsonl"
+        if path.exists():
+            for r in map(json.loads, path.open(encoding="utf-8")):
+                if r["score"] is not None:
+                    scores["ragas"][r["sample_id"]] = r["score"]
     out: dict[str, Any] = {"systems": {}}
-    for system, tag in tags.items():
-        entry = {}
-        for ds in ("relevancy_wikieval", "relevancy_miracl_ko", "relevancy_miracl_en"):
-            samples, labels = run_phase4.load(ds)
-            path = Path(".cache/phase4") / f"{ds}.{tag}.jsonl"
-            results = [SampleResult.model_validate_json(l) for l in path.open(encoding="utf-8")]
-            a = run_phase4.analyze(results, {s.sample_id: s for s in samples}, labels, 0.5)
-            entry[ds] = {k: v for k, v in a["statement"].items() if "_vs_" in k}
+    for system, sc in scores.items():
+        entry: dict[str, dict] = {}
+        for ds, pairs in AR_PAIRS.items():
+            groups: dict[str, dict[str, float]] = defaultdict(dict)
+            for sid, v in sc.items():
+                lab = labels.get(sid)
+                if lab and lab["dataset"] == ds:
+                    groups[lab["group"]][lab["variant"]] = v
+            entry[ds] = {}
+            for hi, lo in pairs:
+                pairs_ = [(g[hi], g[lo]) for g in groups.values() if hi in g and lo in g]
+                entry[ds][f"{hi}_vs_{lo}"] = {
+                    "pairs": len(pairs_),
+                    "pairwise_acc": sum(1.0 if a > b else 0.5 if a == b else 0.0 for a, b in pairs_) / len(pairs_) if pairs_ else None,
+                    "mean_diff": _mean([a - b for a, b in pairs_]),
+                }
         out["systems"][system] = entry
     out["systems"]["hybrid"] = out["systems"]["jev"]
+    out["errors"] = {"ragas": sum(1 for ds in AR_DATASETS for path in [OUT / f"ragas.{ds}.answer_relevancy.jsonl"] if path.exists() for r in map(json.loads, path.open(encoding="utf-8")) if r["error"])}
     return out
 
 
@@ -342,15 +377,21 @@ def render(report: dict) -> str:
         out.append(f"| {names[s]} | " + " | ".join(cells) + " |")
 
     ar = m["answer_relevancy"]
-    out.append("\n#### Answer Relevancy (쌍 정확도; RAGAS는 임베딩이 없어 제외, Hybrid = JEV)\n")
-    out.append("| 시스템 | WikiEval good > poor | 한국어 base > offtopic | 한국어 base > nonanswer | 영어 base > offtopic | 영어 base > nonanswer |")
-    out.append("|---|---|---|---|---|---|")
-    for s in ("llm", "jev"):
-        e = ar["systems"][s]
-        g = lambda ds, c: f(e[ds].get(c, {}).get("pairwise_acc"))
+    out.append("\n#### Answer Relevancy (쌍 정확도; Hybrid = JEV)\n")
+    out.append("RAGAS AnswerRelevancy는 로컬 다국어 임베딩(paraphrase-multilingual-MiniLM-L12-v2)으로 실행했다. "
+               "wrong 비교는 쌍 정확도가 0.5 근처, 평균 차가 0에 가까워야 좋다 (관련성은 정답 여부와 무관해야 한다).\n")
+    out.append("| 시스템 | WikiEval good > poor | 한국어 base > offtopic | 한국어 base > nonanswer | 영어 base > offtopic | 영어 base > nonanswer "
+               "| WikiEval good vs wrong 평균 차 | 한국어 base vs wrong 평균 차 | 영어 base vs wrong 평균 차 |")
+    out.append("|---|---|---|---|---|---|---|---|---|")
+    for s in ("ragas", "llm", "jev"):
+        e = ar["systems"].get(s)
+        if not e or not any(v.get("pairs") for ds in e.values() for v in ds.values()):
+            continue
+        g = lambda ds, c, k="pairwise_acc": f(e[ds].get(c, {}).get(k))
         out.append(
             f"| {names[s]} | {g('relevancy_wikieval', 'good_vs_poor')} | {g('relevancy_miracl_ko', 'base_vs_offtopic')} | {g('relevancy_miracl_ko', 'base_vs_nonanswer')} "
-            f"| {g('relevancy_miracl_en', 'base_vs_offtopic')} | {g('relevancy_miracl_en', 'base_vs_nonanswer')} |"
+            f"| {g('relevancy_miracl_en', 'base_vs_offtopic')} | {g('relevancy_miracl_en', 'base_vs_nonanswer')} "
+            f"| {g('relevancy_wikieval', 'good_vs_wrong', 'mean_diff')} | {g('relevancy_miracl_ko', 'base_vs_wrong', 'mean_diff')} | {g('relevancy_miracl_en', 'base_vs_wrong', 'mean_diff')} |"
         )
 
     out.append("\n#### 시스템 간 점수 순위 일치 (Kendall τ, 샘플 단위)\n")

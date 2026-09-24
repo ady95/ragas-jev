@@ -14,7 +14,7 @@ from pathlib import Path
 from ragas_jev.schemas import SampleResult
 
 COLUMNS = [
-    "sample_id", "metric", "unit_id", "unit_text", "question_id",
+    "sample_id", "metric", "unit_id", "unit_text", "question_id", "lang",
     "jev_p", "final_p", "decision_source", "auditor_model", "label",
 ]
 
@@ -33,6 +33,7 @@ def export_review(results: Iterable[SampleResult], path: Path) -> int:
                     "unit_id": record.unit.unit_id,
                     "unit_text": record.unit.text,
                     "question_id": d.question_id,
+                    "lang": result.evaluation_model.get("lang", ""),
                     "jev_p": f"{d.jev_p:.4f}",
                     "final_p": f"{d.p:.4f}",
                     "decision_source": d.decision_source,

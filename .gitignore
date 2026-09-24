@@ -40,3 +40,4 @@ benchmark/datasets/ragtruth_*/
 benchmark/datasets/ko_hallu_*/
 benchmark/datasets/recall_*/
 benchmark/datasets/relevancy_*/
+benchmark/datasets/cp_ref_*/
