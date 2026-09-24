@@ -41,8 +41,12 @@ class Settings(BaseSettings):
     # Models for each role
     ragas_jev_preprocessor_model: str | None = None
     ragas_jev_auditor_model: str = "gpt-6-luna"  # re-judges uncertain JEV decisions (Phase 5)
-    ragas_jev_strong_judge_model: str = "gpt-6-astra"
+    ragas_jev_strong_judge_model: str = "gpt-6-sol"
     ragas_jev_baseline_judge_model: str = "gpt-6-sol"  # LLM judge that JEV is benchmarked against
+
+    # Phase 5: escalation and calibration
+    ragas_jev_audit_enabled: bool = True
+    ragas_jev_calibration_file: Path | None = None  # default: packaged calibration for the pinned JEV model
 
     # Data protection / storage
     ragas_jev_pii_masking: bool = True
@@ -55,6 +59,12 @@ class Settings(BaseSettings):
     @property
     def preprocessor_model(self) -> str:
         return self.ragas_jev_preprocessor_model or self.openai_model
+
+    @property
+    def calibration_path(self) -> Path:
+        if self.ragas_jev_calibration_file is not None:
+            return self.ragas_jev_calibration_file
+        return Path(__file__).parent / "data" / f"calibration_{self.typesafe_default_model}.json"
 
 
 @lru_cache

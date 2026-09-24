@@ -45,7 +45,7 @@ uv run pytest            # 오프라인 테스트 (unit / contract / integration
 uv run pytest -m live    # 실제 JEV API 호출 (합성 데이터)
 ```
 
-## 현재 상태 (Phase 4)
+## 현재 상태 (Phase 5)
 
 | 구성 요소 | 상태 |
 |---|---|
@@ -55,8 +55,10 @@ uv run pytest -m live    # 실제 JEV API 호출 (합성 데이터)
 | CLI `healthcheck`, `evaluate` | 구현 |
 | Preprocessor | LLM claim/statement 추출 (`--extractor llm`, 기본) + 오프라인 문장 분리 (`--extractor sentence`) |
 | 수치 검사 | claim 숫자와 contexts 대조 (진단 정보) |
-| LLM Judge (Phase 1 비교용) | 구현. Auditor/Router 연결은 Phase 5 |
+| 확률 보정 + Router | 구현. 보정 파일 `src/ragas_jev/data/calibration_jev-1.13.0.json`, metric별 routing 정책 |
+| 사람 검토 | `ragas-jev review export` / `review import` |
 | Phase 1 검증 | 완료: [리포트](docs/reports/phase1_context_precision.md) |
 | Phase 2 검증 | 완료: [리포트](docs/reports/phase2_faithfulness.md) |
 | Phase 3 검증 | 완료: [리포트](docs/reports/phase3_context_recall.md) |
 | Phase 4 검증 | 완료: [리포트](docs/reports/phase4_answer_relevancy.md) |
+| Phase 5 검증 | 완료: [리포트](docs/reports/phase5_routing_calibration.md) |

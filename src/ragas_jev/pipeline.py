@@ -2,8 +2,9 @@
 
 load → PII mask → extract units → one JEV request per sample × metric
 → decisions → deterministic scoring → result JSON.
-Escalation to LLM judges (Phase 5) is not wired in yet; the result already
-reports how many decisions fall below each routing threshold.
+Optional Phase 5 stages run on every judged unit before scoring:
+calibration (per question and language) and confidence-gated escalation to
+LLM judges (Router).
 """
 
 from __future__ import annotations
@@ -13,14 +14,17 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Literal
 
+from ragas_jev.audit.router import Router, RoutingStats
 from ragas_jev.checks.numeric import check_claim
 from ragas_jev.config import Settings
 from ragas_jev.judge import questions as Q
 from ragas_jev.judge.base import Judge, JudgeQuestion, JudgeResult
+from ragas_jev.lang import detect_lang
 from ragas_jev.preprocess.base import ExtractedUnit, Extractor
 from ragas_jev.privacy.pii_guard import PiiMaskingError, mask_sample
-from ragas_jev.schemas import METRICS, EvalUnit, MetricResult, RagSample, SampleResult, UnitKind, UnitRecord
+from ragas_jev.schemas import METRICS, Decision, EvalUnit, MetricResult, RagSample, SampleResult, UnitKind, UnitRecord
 from ragas_jev.scoring import metrics as M
+from ragas_jev.scoring.calibration import Calibrator
 from ragas_jev.scoring.uncertainty import to_decision
 
 SupportMode = Literal["joint", "per_chunk"]
@@ -31,6 +35,7 @@ class _MetricOutput:
     result: MetricResult
     records: list[UnitRecord] = field(default_factory=list)
     usage: JudgeResult = field(default_factory=JudgeResult)
+    routing: RoutingStats = field(default_factory=RoutingStats)
 
 
 def _merge_usage(parts: Iterable[JudgeResult]) -> JudgeResult:
@@ -60,6 +65,8 @@ class Evaluator:
         support_mode: SupportMode = "joint",
         state_char_budget: int = 20_000,
         numeric_cap: float = 0.2,
+        calibrator: Calibrator | None = None,
+        router: Router | None = None,
     ) -> None:
         self.judge = judge
         self.extractor = extractor
@@ -80,6 +87,8 @@ class Evaluator:
         # Cap applied to p of claims whose numbers are absent from the contexts,
         # for the diagnostic `*_numeric_guarded` score only.
         self.numeric_cap = numeric_cap
+        self.calibrator = calibrator
+        self.router = router
 
     @classmethod
     def from_settings(cls, settings: Settings, judge: Judge, extractor: Extractor) -> Evaluator:
@@ -152,14 +161,25 @@ class Evaluator:
         ]
 
     async def _judge(
-        self, metric: str, state: dict, units: list[EvalUnit], questions: list[JudgeQuestion]
-    ) -> tuple[list[UnitRecord], JudgeResult]:
+        self, metric: str, state: dict, units: list[EvalUnit], questions: list[JudgeQuestion], lang: str
+    ) -> tuple[list[UnitRecord], JudgeResult, RoutingStats]:
         usage = await self.judge.evaluate(state, questions)
         records = []
         for unit, question in zip(units, questions):
-            decision = to_decision(question, usage.answers[question.unit_id])
+            decision = self._calibrate(to_decision(question, usage.answers[question.unit_id]), lang)
             records.append(UnitRecord(metric=metric, unit=unit, decision=decision))
-        return records, usage
+        routing = await self._route(metric, state, records, questions)
+        return records, usage, routing
+
+    def _calibrate(self, decision: Decision, lang: str) -> Decision:
+        return self.calibrator.apply(decision, lang) if self.calibrator else decision
+
+    async def _route(
+        self, metric: str, state: dict, records: list[UnitRecord], questions: list[JudgeQuestion]
+    ) -> RoutingStats:
+        if self.router is None:
+            return RoutingStats()
+        return await self.router.route(metric, state, records, questions)
 
     def _context_groups(self, contexts: list[str]) -> list[list[str]]:
         if self.support_mode == "per_chunk":
@@ -177,14 +197,14 @@ class Evaluator:
         return groups
 
     async def _support(
-        self, metric: str, contexts: list[str], units: list[EvalUnit], questions: list[JudgeQuestion]
-    ) -> tuple[list[UnitRecord], JudgeResult]:
+        self, metric: str, contexts: list[str], units: list[EvalUnit], questions: list[JudgeQuestion], lang: str
+    ) -> tuple[list[UnitRecord], JudgeResult, RoutingStats]:
         """Judge claim support against the contexts; p = max over context groups."""
         groups = self._context_groups(contexts)
         results = await asyncio.gather(*(self.judge.evaluate({"contexts": g}, questions) for g in groups))
         records = []
         for unit, question in zip(units, questions):
-            candidates = [to_decision(question, r.answers[question.unit_id]) for r in results]
+            candidates = [self._calibrate(to_decision(question, r.answers[question.unit_id]), lang) for r in results]
             best = max(range(len(candidates)), key=lambda i: candidates[i].p)
             record = UnitRecord(metric=metric, unit=unit, decision=candidates[best])
             if len(groups) > 1:
@@ -194,7 +214,9 @@ class Evaluator:
             if numeric.has_numbers:
                 record.checks["numeric"] = numeric.as_dict()
             records.append(record)
-        return records, _merge_usage(results)
+        # The auditor sees all contexts at once (LLMs are not bound by JEV's state budget).
+        routing = await self._route(metric, {"contexts": contexts}, records, questions)
+        return records, _merge_usage(results), routing
 
     def _numeric_extras(self, prefix: str, records: list[UnitRecord]) -> dict[str, float | None]:
         with_numbers = [r for r in records if "numeric" in r.checks]
@@ -214,9 +236,8 @@ class Evaluator:
             return _MetricOutput(M.context_precision([]))
         questions = [Q.chunk_relevance(u.unit_id, u.index, self.chunk_relevance_version) for u in units]
         state = {"question": s.question, "contexts": s.contexts}
-        records, usage = await self._judge("context_precision", state, units, questions)
-        decisions = [r.decision for r in records]
-        return _MetricOutput(M.context_precision(decisions, self.threshold, self.conf_accept), records, usage)
+        records, usage, routing = await self._judge("context_precision", state, units, questions, self._lang(s))
+        return _MetricOutput(self._score("context_precision", records), records, usage, routing)
 
     async def _faithfulness(self, s: RagSample) -> _MetricOutput:
         if not s.contexts:
@@ -225,10 +246,8 @@ class Evaluator:
         if not units:
             return _MetricOutput(M.faithfulness([]))
         questions = [Q.claim_support(u.unit_id, u.text, self.claim_support_version) for u in units]
-        records, usage = await self._support("faithfulness", s.contexts, units, questions)
-        result = M.faithfulness([r.decision for r in records], self.threshold, self.conf_accept)
-        result.extra.update(self._numeric_extras("faithfulness", records))
-        return _MetricOutput(result, records, usage)
+        records, usage, routing = await self._support("faithfulness", s.contexts, units, questions, self._lang(s))
+        return _MetricOutput(self._score("faithfulness", records), records, usage, routing)
 
     async def _context_recall(self, s: RagSample) -> _MetricOutput:
         if not s.reference:
@@ -240,10 +259,8 @@ class Evaluator:
             return _MetricOutput(M.context_recall([]))
         version = f"ref_claim_coverage.{self.claim_support_version.rsplit('.', 1)[-1]}"
         questions = [Q.ref_claim_coverage(u.unit_id, u.text, version) for u in units]
-        records, usage = await self._support("context_recall", s.contexts, units, questions)
-        result = M.context_recall([r.decision for r in records], self.threshold, self.conf_accept)
-        result.extra.update(self._numeric_extras("context_recall", records))
-        return _MetricOutput(result, records, usage)
+        records, usage, routing = await self._support("context_recall", s.contexts, units, questions, self._lang(s))
+        return _MetricOutput(self._score("context_recall", records), records, usage, routing)
 
     async def _answer_relevancy(self, s: RagSample) -> _MetricOutput:
         units = self._units("statement", await self.extractor.statements(s.question, s.answer))
@@ -254,11 +271,59 @@ class Evaluator:
         if not questions:
             return _MetricOutput(M.answer_relevancy([]))
         state = {"question": s.question, "answer": s.answer}
-        records, usage = await self._judge("answer_relevancy", state, units, questions)
-        statement_decisions = [r.decision for r in records if r.unit.kind == "statement"]
-        scale = next((r.decision for r in records if r.unit.kind == "answer"), None)
-        result = M.answer_relevancy(statement_decisions, scale, self.threshold, self.conf_accept)
-        return _MetricOutput(result, records, usage)
+        records, usage, routing = await self._judge("answer_relevancy", state, units, questions, self._lang(s))
+        return _MetricOutput(self._score("answer_relevancy", records), records, usage, routing)
+
+    @staticmethod
+    def _lang(s: RagSample) -> str:
+        return detect_lang(f"{s.question} {s.answer} {s.reference or ''}")
+
+    # --- scoring (also used to re-score after human review) -------------
+
+    def _score(self, metric: str, records: list[UnitRecord]) -> MetricResult:
+        t, accept = self.threshold, self.conf_accept
+        decisions = [r.decision for r in records if r.decision is not None]
+        if metric == "context_precision":
+            ranked = sorted(records, key=lambda r: r.unit.index)
+            return M.context_precision([r.decision for r in ranked if r.decision is not None], t, accept)
+        if metric == "faithfulness":
+            result = M.faithfulness(decisions, t, accept)
+            result.extra.update(self._numeric_extras("faithfulness", records))
+            return result
+        if metric == "context_recall":
+            result = M.context_recall(decisions, t, accept)
+            result.extra.update(self._numeric_extras("context_recall", records))
+            return result
+        if metric == "answer_relevancy":
+            statements = [r.decision for r in records if r.unit.kind == "statement" and r.decision is not None]
+            scale = next((r.decision for r in records if r.unit.kind == "answer"), None)
+            return M.answer_relevancy(statements, scale, t, accept)
+        raise ValueError(f"unknown metric: {metric}")
+
+    def rescore(self, result: SampleResult) -> SampleResult:
+        """Recompute scores from the stored unit decisions (e.g. after human labels)."""
+        if result.status in ("error", "blocked_pii"):
+            return result
+        metrics = list(dict.fromkeys(r.metric for r in result.units))
+        outputs = [
+            _MetricOutput(self._score(m, [r for r in result.units if r.metric == m]), [r for r in result.units if r.metric == m])
+            for m in metrics
+        ]
+        outputs += [
+            _MetricOutput(MetricResult(name=m, score=None, reason=reason))
+            for m, reason in result.reasons.items()
+            if m not in metrics
+        ]
+        rescored = result.model_copy(deep=True)
+        rescored.retrieval, rescored.generation, rescored.confidence, rescored.uncertainty = {}, {}, {}, {}
+        rescored.reasons = {}
+        self._assemble(rescored, outputs)
+        rescored.usage = dict(result.usage)
+        rescored.escalation["routing_failures"] = result.escalation.get("routing_failures", 0)
+        rescored.escalation["human_labeled"] = sum(
+            r.decision.decision_source == "human" for r in rescored.units if r.decision
+        )
+        return rescored
 
     # --- assembly -------------------------------------------------------
 
@@ -267,7 +332,9 @@ class Evaluator:
             "primary_judge": "JEV",
             "judge_model": self.judge.model_id,
             "preprocessor": self.extractor.version,
-            "secondary_judge": None,
+            "secondary_judge": self.router.auditor.model_id if self.router else None,
+            "strong_judge": self.router.strong.model_id if self.router and self.router.strong else None,
+            "calibration": self.calibrator.source if self.calibrator else None,
             "question_versions": [
                 self.chunk_relevance_version,
                 self.claim_support_version,
@@ -310,17 +377,23 @@ class Evaluator:
             )
         decisions = [r.decision for o in outputs for r in o.records if r.decision is not None]
         result.units = [r for o in outputs for r in o.records]
+        routing = RoutingStats()
+        for o in outputs:
+            routing.add(o.routing)
         result.escalation = {
             "total_decisions": len(decisions),
             "below_conf_accept": sum(d.confidence < self.conf_accept for d in decisions),
             "below_conf_audit": sum(d.confidence < self.conf_audit for d in decisions),
-            "audited": 0,
-            "strong_judged": 0,
-            "human_review": 0,
+            "audited": sum(d.decision_source == "llm_auditor" for d in decisions),
+            "strong_judged": sum(d.decision_source == "strong_judge" for d in decisions),
+            "human_review": sum(d.needs_human_review for d in decisions),
+            "routing_failures": routing.failed,
         }
         result.usage = {
             "jev_requests": sum(o.usage.requests for o in outputs),
             "jev_input_tokens": sum(o.usage.input_tokens for o in outputs),
             "jev_cached_answers": sum(o.usage.cached for o in outputs),
+            "llm_judge_requests": routing.llm_requests,
+            "llm_judge_input_tokens": routing.llm_input_tokens,
         }
         result.status = "partial" if result.reasons else "ok"

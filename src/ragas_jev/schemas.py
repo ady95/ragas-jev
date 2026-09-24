@@ -43,7 +43,9 @@ class Decision(BaseModel):
     jev_model: str
     jev_request_id: str | None = None
     decision_source: DecisionSource = "jev"
-    jev_p: float
+    jev_p: float                     # raw JEV value, kept after calibration / escalation
+    calibrated: bool = False         # p was mapped through a Calibrator
+    auditor_model: str | None = None # set when an LLM judge replaced the JEV decision
     audit_rationale: str | None = None
     needs_human_review: bool = False
 
