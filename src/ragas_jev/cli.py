@@ -1,4 +1,4 @@
-"""Command-line entry point: `ragas-jev healthcheck | evaluate`."""
+"""Command-line entry point: `ragas-jev healthcheck | evaluate | review export | review import`."""
 
 from __future__ import annotations
 
@@ -11,6 +11,9 @@ from typing import Optional
 
 import typer
 
+from ragas_jev.audit.llm_judge import LlmJudge
+from ragas_jev.audit.review_queue import apply_labels, export_review, read_labels
+from ragas_jev.audit.router import DEFAULT_METRIC_POLICIES, Router, RoutingPolicy
 from ragas_jev.cache import AnswerCache
 from ragas_jev.config import get_settings
 from ragas_jev.judge.base import JudgeQuestion
@@ -21,8 +24,11 @@ from ragas_jev.pipeline import Evaluator
 from ragas_jev.preprocess.base import SentenceSplitExtractor
 from ragas_jev.preprocess.llm_extractor import LlmExtractor
 from ragas_jev.schemas import METRICS, RagSample, SampleResult
+from ragas_jev.scoring.calibration import Calibrator
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
+review_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Human review queue")
+app.add_typer(review_app, name="review")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -98,6 +104,9 @@ def evaluate(
     cache: bool = typer.Option(True, help="Reuse cached judge answers"),
     resume: bool = typer.Option(True, help="Skip sample_ids already in --output"),
     limit: Optional[int] = typer.Option(None, help="Evaluate at most N samples"),
+    audit: Optional[bool] = typer.Option(None, "--audit/--no-audit", help="Escalate low-confidence JEV decisions to LLM judges (default: RAGAS_JEV_AUDIT_ENABLED)"),
+    calibration: Optional[Path] = typer.Option(None, help="Calibration JSON (default: RAGAS_JEV_CALIBRATION_FILE, else the packaged file)"),
+    no_calibration: bool = typer.Option(False, "--no-calibration", help="Use raw JEV probabilities"),
 ) -> None:
     """Evaluate RAG samples and append one result per line to --output."""
     selected = METRICS if metrics == "all" else tuple(m.strip() for m in metrics.split(",") if m.strip())
@@ -110,7 +119,10 @@ def evaluate(
     if not samples:
         typer.echo("nothing to evaluate")
         return
-    results = asyncio.run(_evaluate(samples, selected, judge, extractor, concurrency, cache, output))
+    settings = get_settings()
+    use_audit = settings.ragas_jev_audit_enabled if audit is None else audit
+    calibrator = None if no_calibration else _load_calibrator(calibration or settings.calibration_path)
+    results = asyncio.run(_evaluate(samples, selected, judge, extractor, concurrency, cache, output, use_audit, calibrator))
     _print_summary(results)
 
 
@@ -122,6 +134,8 @@ async def _evaluate(
     concurrency: int,
     use_cache: bool,
     output: Path,
+    use_audit: bool = False,
+    calibrator: Calibrator | None = None,
 ) -> list[SampleResult]:
     settings = get_settings()
     inner = MockJudge() if judge_name == "mock" else JevJudge.from_settings(settings)
@@ -131,7 +145,10 @@ async def _evaluate(
     # the same units is what keeps re-runs reproducible.
     extraction_cache = AnswerCache(settings.ragas_jev_cache_dir / "extractions.sqlite")
     units = LlmExtractor.from_settings(settings, extraction_cache) if extractor_name == "llm" else SentenceSplitExtractor()
+    router = _build_router(settings) if use_audit and judge_name != "mock" else None
     evaluator = Evaluator.from_settings(settings, judge, units)
+    evaluator.calibrator = calibrator
+    evaluator.router = router
     output.parent.mkdir(parents=True, exist_ok=True)
 
     with output.open("a", encoding="utf-8") as sink:
@@ -150,7 +167,64 @@ async def _evaluate(
                 answer_cache.close()
             if isinstance(units, LlmExtractor):
                 await units.aclose()
+            if router is not None:
+                await router.auditor.aclose()
+                if router.strong is not None:
+                    await router.strong.aclose()
             extraction_cache.close()
+
+
+def _load_calibrator(path: Path | None) -> Calibrator | None:
+    if path is None or not path.exists():
+        return None
+    return Calibrator.load(path)
+
+
+def _build_router(settings) -> Router:
+    """Per-metric Phase 5 policies, unless RAGAS_JEV_CONF_ACCEPT/AUDIT are set explicitly."""
+    explicit = {"ragas_jev_conf_accept", "ragas_jev_conf_audit"} & settings.model_fields_set
+    policy = RoutingPolicy(settings.ragas_jev_conf_accept, settings.ragas_jev_conf_audit)
+    return Router(
+        auditor=LlmJudge.from_settings(settings, model=settings.ragas_jev_auditor_model),
+        strong=LlmJudge.from_settings(settings, model=settings.ragas_jev_strong_judge_model),
+        policy=policy,
+        metric_policies={} if explicit else dict(DEFAULT_METRIC_POLICIES),
+        decision_threshold=settings.ragas_jev_decision_threshold,
+    )
+
+
+def _read_results(path: Path) -> list[SampleResult]:
+    return [SampleResult.model_validate_json(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+@review_app.command("export")
+def review_export(
+    input: Path = typer.Option(..., "--input", "-i", help="Results JSONL from `evaluate`"),
+    out: Path = typer.Option(..., "--out", "-o", help="CSV to write"),
+) -> None:
+    """Write units flagged for human review to a CSV (PII-masked text only)."""
+    n = export_review(_read_results(input), out)
+    typer.echo(f"{n} units written to {out}; fill the `label` column with 1 (yes) or 0 (no)")
+
+
+@review_app.command("import")
+def review_import(
+    input: Path = typer.Option(..., "--input", "-i", help="Results JSONL from `evaluate`"),
+    labels: Path = typer.Option(..., "--labels", "-l", help="Reviewed CSV"),
+    out: Path = typer.Option(..., "--out", "-o", help="Re-scored results JSONL"),
+) -> None:
+    """Apply human labels (decision_source=human) and re-score the affected samples."""
+    settings = get_settings()
+    evaluator = Evaluator.from_settings(settings, MockJudge(), SentenceSplitExtractor())
+    label_map = read_labels(labels)
+    total = 0
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8") as sink:
+        for result in _read_results(input):
+            updated, applied = apply_labels(result, label_map)
+            total += applied
+            sink.write((evaluator.rescore(updated) if applied else updated).model_dump_json() + "\n")
+    typer.echo(f"applied {total} labels; re-scored results written to {out}")
 
 
 def _print_summary(results: list[SampleResult]) -> None:
