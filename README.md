@@ -137,6 +137,10 @@ uv run ragas-jev evaluate --help
 
 ## 평가 지표
 
+![RAGAS-JEV의 네 가지 평가 지표와 판정 신뢰도, RAGAS와의 대표 벤치마크 비교](docs/assets/ragas-jev-evaluation-infographic.png)
+
+평가 방식과 비교 조건은 [평가 항목 상세 문서](docs/ragas-jev_평가항목.md)를 참고하세요.
+
 | 지표 | 평가하는 질문 | 계산 및 진단 |
 |---|---|---|
 | **Context Precision** | 관련 검색 문서가 잘 검색되고 상위에 배치되었는가? | chunk 관련 확률 평균, 순위 가중 점수, AP |
