@@ -41,3 +41,6 @@ benchmark/datasets/ko_hallu_*/
 benchmark/datasets/recall_*/
 benchmark/datasets/relevancy_*/
 benchmark/datasets/cp_ref_*/
+
+# temporary files
+참고코드/
