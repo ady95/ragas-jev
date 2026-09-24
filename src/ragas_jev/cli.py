@@ -1,11 +1,13 @@
-"""Command-line entry point: `ragas-jev healthcheck | evaluate | review export | review import`."""
+"""Command-line entry point: `ragas-jev init | healthcheck | evaluate | review | calibration`."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import math
+import os
 import sys
+from importlib import resources
 from pathlib import Path
 from typing import Optional
 
@@ -15,7 +17,7 @@ from ragas_jev.audit.llm_judge import LlmJudge
 from ragas_jev.audit.review_queue import apply_labels, export_review, read_labels
 from ragas_jev.audit.router import DEFAULT_METRIC_POLICIES, Router, RoutingPolicy
 from ragas_jev.cache import AnswerCache
-from ragas_jev.config import get_settings
+from ragas_jev.config import ENV_FILE_VAR, get_settings, user_config_dir
 from ragas_jev.judge.base import JudgeQuestion
 from ragas_jev.judge.cached import CachedJudge
 from ragas_jev.judge.jev_client import JevJudge
@@ -37,9 +39,53 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 
+@app.callback()
+def main(
+    env_file: Optional[Path] = typer.Option(
+        None, "--env-file", help="Settings file to load instead of ./.env or the user config file"
+    ),
+) -> None:
+    """RAG evaluation with JEV as the primary judge."""
+    if env_file is not None:
+        if not env_file.is_file():
+            raise typer.BadParameter(f"{env_file} does not exist", param_hint="--env-file")
+        os.environ[ENV_FILE_VAR] = str(env_file)
+        get_settings.cache_clear()
+
+
+def _packaged(name: str) -> str:
+    return resources.files("ragas_jev").joinpath("data", name).read_text(encoding="utf-8")
+
+
+@app.command()
+def init(
+    user: bool = typer.Option(False, "--user", help="Write the user config file, used from any directory"),
+    path: Optional[Path] = typer.Option(None, "--path", help="Where to write the settings file (default: ./.env)"),
+    sample: bool = typer.Option(False, "--sample", help="Also write sample_ko.jsonl, a small synthetic dataset"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing files"),
+) -> None:
+    """Create a settings file from the template, to fill in API keys."""
+    target = path or (user_config_dir() / ".env" if user else Path(".env"))
+    if target.exists() and not force:
+        typer.echo(f"{target} already exists; not overwritten (use --force)")
+    else:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(_packaged("env.template"), encoding="utf-8")
+        if os.name != "nt":
+            target.chmod(0o600)  # holds API keys
+        typer.echo(f"wrote {target}: set TYPESAFE_API_KEY and OPENAI_API_KEY, then run `ragas-jev healthcheck`")
+    if sample:
+        sample_path = Path("sample_ko.jsonl")
+        if sample_path.exists() and not force:
+            typer.echo(f"{sample_path} already exists; not overwritten (use --force)")
+        else:
+            sample_path.write_text(_packaged("sample_ko.jsonl"), encoding="utf-8")
+            typer.echo(f"wrote {sample_path}")
+
+
 @app.command()
 def healthcheck() -> None:
-    """Check the LLM proxy and the JEV API with synthetic, non-sensitive inputs."""
+    """Check the LLM endpoint and the JEV API with synthetic, non-sensitive inputs."""
     ok = asyncio.run(_healthcheck())
     raise typer.Exit(code=0 if ok else 1)
 
@@ -48,7 +94,7 @@ async def _healthcheck() -> bool:
     settings = get_settings()
     ok = True
 
-    typer.echo(f"[proxy] {settings.openai_base_url}")
+    typer.echo(f"[llm] {settings.openai_base_url or 'OpenAI API (OPENAI_BASE_URL not set)'}")
     try:
         from openai import AsyncOpenAI
 
