@@ -1,12 +1,17 @@
-"""Runtime settings loaded from environment variables and `.env`.
+"""Runtime settings loaded from environment variables and a `.env` file.
 
 Field names match environment variable names (case-insensitive), so `.env`
 entries such as `TYPESAFE_API_KEY` map directly onto `typesafe_api_key`.
 Secrets are `SecretStr` so they never show up in reprs, logs, or result files.
+
+Precedence: explicit arguments > environment variables > `.env` file > defaults.
+The `.env` file is the first that exists of: `--env-file` / `RAGAS_JEV_ENV_FILE`,
+`./.env`, and the user config file (`ragas-jev init --user` writes it).
 """
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -17,7 +22,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Generative LLM (openai-oauth proxy)
+    # Generative LLM (any OpenAI-compatible endpoint; unset base URL = OpenAI API)
     openai_base_url: str | None = None
     openai_api_key: SecretStr = SecretStr("not-needed")
     openai_model: str = "gpt-5.6-luna"
@@ -67,6 +72,27 @@ class Settings(BaseSettings):
         return Path(__file__).parent / "data" / f"calibration_{self.typesafe_default_model}.json"
 
 
+ENV_FILE_VAR = "RAGAS_JEV_ENV_FILE"
+
+
+def user_config_dir() -> Path:
+    if os.name == "nt":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "ragas-jev"
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "ragas-jev"
+
+
+def resolve_env_file(explicit: Path | None = None) -> Path | None:
+    """The `.env` file to load, or None to use environment variables only."""
+    if explicit is not None:
+        return explicit
+    if os.environ.get(ENV_FILE_VAR):
+        return Path(os.environ[ENV_FILE_VAR])
+    for candidate in (Path(".env"), user_config_dir() / ".env"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    return Settings(_env_file=resolve_env_file())
