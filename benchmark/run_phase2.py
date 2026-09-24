@@ -214,13 +214,15 @@ async def main_async(args: argparse.Namespace) -> dict:
     try:
         for name in args.datasets:
             samples, labels = load(name)
+            samples = samples[: args.limit] if args.limit else samples
             by_id = {s.sample_id: s for s in samples}
             print(f"== {name}: {len(samples)} responses")
             entry: dict[str, Any] = {"responses": len(samples), "extraction": await extract_all(extractor, samples, args.concurrency)}
             print(f"   extraction done ({entry['extraction']['llm_calls']} new LLM calls)")
             for cfg in configs:
                 results, timed = await run_config(cfg, samples, extractor, args.concurrency)
-                with (RAW_DIR / f"{name}.{cfg.tag}.jsonl").open("w", encoding="utf-8") as f:
+                suffix = f".{args.tag}" if args.tag else ""
+                with (RAW_DIR / f"{name}.{cfg.tag}{suffix}.jsonl").open("w", encoding="utf-8") as f:
                     for r in results:
                         f.write(r.model_dump_json() + "\n")
                 analysis = analyze(results, by_id, labels, settings.ragas_jev_decision_threshold)
@@ -282,6 +284,8 @@ def main() -> None:
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--summary", type=Path, default=RAW_DIR / "summary.json")
     parser.add_argument("--render-only", action="store_true")
+    parser.add_argument("--limit", type=int, default=None, help="first N responses per dataset")
+    parser.add_argument("--tag", default="", help="suffix for raw result files (repeat runs)")
     args = parser.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")
     if not args.render_only:
