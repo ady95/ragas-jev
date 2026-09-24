@@ -38,6 +38,27 @@ uv run ragas-jev evaluate -i data.jsonl -o results/out.jsonl --judge mock   # AP
 
 `reference`가 없으면 Context Recall은 계산하지 않고 `status=partial`로 기록합니다.
 
+## 사람 검토와 도메인 재보정
+
+```bash
+# LLM이 JEV와 반대로 판정한 unit을 CSV로 내보내고, 라벨을 반영해 재채점
+uv run ragas-jev review export -i results/out.jsonl -o results/review.csv
+uv run ragas-jev review import -i results/out.jsonl -l results/review.csv -o results/out_reviewed.jsonl
+
+# 서비스 도메인 라벨로 JEV 확률 보정을 다시 학습 (자세한 절차: docs/도메인_재보정_가이드.md)
+uv run ragas-jev calibration sample -r results/out.jsonl -s data.jsonl -o results/label_sheet.csv
+uv run ragas-jev calibration fit -l results/label_sheet.csv -o results/domain_calibration.json
+uv run ragas-jev evaluate -i data.jsonl -o results/out2.jsonl --calibration results/domain_calibration.json
+```
+
+## 벤치마크 의존성
+
+```bash
+uv sync --all-groups   # benchmark(ragas, pyarrow), embeddings(sentence-transformers, torch), dev
+```
+
+`ragas` 기준선은 Python 3.12 가상환경이 필요하다 (`uv venv --python 3.12`). 자세한 재현 방법은 각 Phase 리포트의 마지막 장에 있다.
+
 ## 테스트
 
 ```bash
@@ -57,9 +78,11 @@ uv run pytest -m live    # 실제 JEV API 호출 (합성 데이터)
 | 수치 검사 | claim 숫자와 contexts 대조 (진단 정보) |
 | 확률 보정 + Router | 구현. 보정 파일 `src/ragas_jev/data/calibration_jev-1.13.0.json`, metric별 routing 정책 |
 | 사람 검토 | `ragas-jev review export` / `review import` |
+| 도메인 재보정 | `ragas-jev calibration sample` / `calibration fit` ([가이드](docs/도메인_재보정_가이드.md)) |
 | Phase 1 검증 | 완료: [리포트](docs/reports/phase1_context_precision.md) |
 | Phase 2 검증 | 완료: [리포트](docs/reports/phase2_faithfulness.md) |
 | Phase 3 검증 | 완료: [리포트](docs/reports/phase3_context_recall.md) |
 | Phase 4 검증 | 완료: [리포트](docs/reports/phase4_answer_relevancy.md) |
 | Phase 5 검증 | 완료: [리포트](docs/reports/phase5_routing_calibration.md) |
 | Phase 6 벤치마크 | 완료: [리포트](docs/reports/phase6_benchmark.md): RAGAS / LLM Judge / JEV / Hybrid 비교 |
+| 후속: 도메인 재보정 검증, reference 기반 Context Precision, RAGAS Answer Relevancy | 완료: [Phase 6 리포트](docs/reports/phase6_benchmark.md) 4.1, 5.1, 5.4절 |

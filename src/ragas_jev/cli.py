@@ -25,10 +25,13 @@ from ragas_jev.preprocess.base import SentenceSplitExtractor
 from ragas_jev.preprocess.llm_extractor import LlmExtractor
 from ragas_jev.schemas import METRICS, RagSample, SampleResult
 from ragas_jev.scoring.calibration import Calibrator
+from ragas_jev.scoring.recalibration import fit_calibration, question_hint, read_sheets, sample_units, write_sheet
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 review_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Human review queue")
 app.add_typer(review_app, name="review")
+calibration_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Domain re-calibration from human labels")
+app.add_typer(calibration_app, name="calibration")
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
@@ -240,6 +243,58 @@ def _print_summary(results: list[SampleResult]) -> None:
     errors = [r for r in results if r.error]
     for r in errors[:5]:
         typer.echo(f"  [{r.status}] {r.sample_id}: {r.error}")
+
+
+@calibration_app.command("sample")
+def calibration_sample(
+    results: Path = typer.Option(..., "--results", "-r", help="Results JSONL from `evaluate`"),
+    samples: Path = typer.Option(..., "--samples", "-s", help="The RagSample JSONL that was evaluated"),
+    out: Path = typer.Option(..., "--out", "-o", help="Label sheet CSV to write"),
+    per_key: int = typer.Option(300, help="Units per question x language (spread over JEV p)"),
+    seed: int = typer.Option(13),
+) -> None:
+    """Write a label sheet for re-calibration (PII-masked question, unit and evidence)."""
+    settings = get_settings()
+    sample_map = {
+        s.sample_id: s
+        for s in (RagSample.model_validate_json(l) for l in samples.read_text(encoding="utf-8").splitlines() if l.strip())
+    }
+    rows = sample_units(_read_results(results), sample_map, per_key=per_key, seed=seed, pii_masking=settings.ragas_jev_pii_masking)
+    write_sheet(rows, out)
+    counts: dict[str, int] = {}
+    for row in rows:
+        counts[f"{row['question_id']}:{row['lang']}"] = counts.get(f"{row['question_id']}:{row['lang']}", 0) + 1
+    typer.echo(f"{len(rows)} units written to {out}")
+    for key, n in sorted(counts.items()):
+        typer.echo(f"  {key}: {n}  ({question_hint(key.split(':')[0])})")
+    typer.echo("Fill `label` with 1 (yes) or 0 (no), then run `ragas-jev calibration fit`.")
+
+
+@calibration_app.command("fit")
+def calibration_fit(
+    labels: list[Path] = typer.Option(..., "--labels", "-l", help="Labeled sheet(s) from `calibration sample`"),
+    out: Path = typer.Option(..., "--out", "-o", help="Calibration JSON to write"),
+    base: Optional[Path] = typer.Option(None, help="Maps kept for keys without enough labels (default: packaged calibration)"),
+    min_labels: int = typer.Option(100, help="Minimum labels to fit a question x language key"),
+) -> None:
+    """Fit calibration maps on domain labels and report cross-validated ECE."""
+    settings = get_settings()
+    base_cal = _load_calibrator(base or settings.calibration_path)
+    units = read_sheets(labels)
+    if not units:
+        typer.echo("no labeled rows found")
+        raise typer.Exit(code=1)
+    calibrator, report = fit_calibration(
+        units, base_cal, min_labels=min_labels, source=f"domain re-calibration from {', '.join(p.name for p in labels)}"
+    )
+    calibrator.save(out)
+    fmt = lambda x: "-" if x is None else f"{x:.3f}"
+    typer.echo(f"{len(units)} labels -> {out}")
+    typer.echo("  key | labels | yes rate | ECE raw | ECE base map | ECE new map (cross-validated) | result")
+    for k in report.keys:
+        status = "fitted" if k.fitted else k.note
+        typer.echo(f"  {k.key} | {k.labels} | {k.positive_rate:.2f} | {fmt(k.ece_raw)} | {fmt(k.ece_base)} | {fmt(k.ece_new_cv)} | {status}")
+    typer.echo(f"Use it with `ragas-jev evaluate --calibration {out}` or RAGAS_JEV_CALIBRATION_FILE={out}")
 
 
 if __name__ == "__main__":
