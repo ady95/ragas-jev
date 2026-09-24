@@ -23,6 +23,7 @@ ANSWER_RELEVANCE_LEVELS = [
 
 
 CHUNK_RELEVANCE_V2 = "chunk_relevance.v2"
+CHUNK_RELEVANCE_V3 = "chunk_relevance.v3"
 
 
 def chunk_relevance(unit_id: str, index: int, version: str = CHUNK_RELEVANCE) -> JudgeQuestion:
@@ -43,6 +44,19 @@ def chunk_relevance(unit_id: str, index: int, version: str = CHUNK_RELEVANCE) ->
             criteria={
                 "true": "The passage states facts that answer the question, fully or in part",
                 "false": "The passage is only on the same topic or mentions the same entities without answering the question",
+            },
+        )
+    if version == CHUNK_RELEVANCE_V3:
+        # Uses the reference answer, like ragas' reference-based ContextPrecision.
+        # The pipeline falls back to v2 for samples without a reference.
+        return JudgeQuestion(
+            unit_id=unit_id,
+            question_id=CHUNK_RELEVANCE_V3,
+            primitive="noul",
+            instructions=f"Does `contexts[{index}]` contain information used in `reference`, the answer to `question`?",
+            criteria={
+                "true": "The passage states at least one fact that appears in or directly supports the reference answer",
+                "false": "None of the reference answer's facts come from this passage",
             },
         )
     raise ValueError(f"unknown chunk relevance version: {version}")

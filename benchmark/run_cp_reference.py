@@ -12,6 +12,9 @@ applied to the human labels: average precision over the ranked contexts.
   hybrid_recal  same routing, but the map is re-fitted on this set's own labels with
           ragas_jev.scoring.recalibration (2-fold by query: each half is scored with
           a map fitted on the other half), i.e. the domain re-calibration workflow
+  *_v3    the same with chunk_relevance.v3, which also shows the judge the reference
+          answer (like ragas). v3 has no benchmark calibration, so only the
+          re-calibrated Hybrid is reported for it
 
 For llm / jev / hybrid the AP uses verdict = p >= 0.5, like ragas; the soft
 precision (mean p) is reported as well.
@@ -87,29 +90,48 @@ def main() -> None:
         queries = {sid.rsplit("-", 1)[0] for sid in labels}
         mapping, n_cal = calibration_map(lang, queries)
 
-        # 2-fold re-calibration on this set's labels (by query), via the recalibration module
         fold_of = {q: i % 2 for i, q in enumerate(sorted(queries))}
-        recal_maps = {}
-        for k in (0, 1):
-            train = [
-                LabeledUnit("chunk_relevance.v2", lang, p, labels[sid][i], sid)
-                for sid, ps in jev.items()
-                if fold_of[sid.rsplit("-", 1)[0]] != k
-                for i, p in enumerate(ps)
-            ]
-            cal, _ = fit_calibration(train, None, min_labels=100)
-            recal_maps[k] = cal.lookup("chunk_relevance.v2", lang)
+
+        def recalibrated(jev_ps: dict[str, list[float]], question_id: str) -> dict[int, object]:
+            """2-fold re-calibration on this set's labels (by query), via the recalibration module."""
+            maps = {}
+            for k in (0, 1):
+                train = [
+                    LabeledUnit(question_id, lang, p, labels[sid][i], sid)
+                    for sid, ps in jev_ps.items()
+                    if fold_of[sid.rsplit("-", 1)[0]] != k
+                    for i, p in enumerate(ps)
+                ]
+                cal, _ = fit_calibration(train, None, min_labels=100)
+                maps[k] = cal.lookup(question_id, lang)
+            return maps
+
+        v3_jev_path = Path(f".cache/phase1/{name}.chunk_relevance.v3.jev.run0.jsonl")
+        v3_llm_path = Path(f".cache/phase1/{name}.chunk_relevance.v3.llm.gpt-6-sol.jsonl")
+        has_v3 = v3_jev_path.exists() and v3_llm_path.exists()
+        jev_v3 = load_units(v3_jev_path) if has_v3 else {}
+        llm_v3 = load_units(v3_llm_path) if has_v3 else {}
 
         systems: dict[str, dict[str, list[float]]] = {"llm": llm, "jev": jev, "hybrid": {}, "hybrid_recal": {}}
-        stats = {"hybrid": [0, 0, 0], "hybrid_recal": [0, 0, 0]}  # escalated units, total units, samples with a call
-        for sid, ps in jev.items():
-            for system, m in (("hybrid", mapping), ("hybrid_recal", recal_maps[fold_of[sid.rsplit("-", 1)[0]]])):
+        variants = [
+            ("hybrid", jev, llm, lambda sid: mapping),
+            ("hybrid_recal", jev, llm, (lambda maps: lambda sid: maps[fold_of[sid.rsplit("-", 1)[0]]])(recalibrated(jev, "chunk_relevance.v2"))),
+        ]
+        if has_v3:
+            systems.update({"llm_v3": llm_v3, "jev_v3": jev_v3, "hybrid_v3_recal": {}})
+            variants.append(
+                ("hybrid_v3_recal", jev_v3, llm_v3, (lambda maps: lambda sid: maps[fold_of[sid.rsplit("-", 1)[0]]])(recalibrated(jev_v3, "chunk_relevance.v3")))
+            )
+        stats = {name_: [0, 0, 0] for name_, *_ in variants}  # escalated units, total units, samples with a call
+        for system, jev_src, llm_src, map_for in variants:
+            for sid, ps in jev_src.items():
+                m = map_for(sid)
                 final, called = [], False
                 for i, p in enumerate(ps):
                     c = m(p)
                     stats[system][1] += 1
                     if policy.band(max(c, 1 - c)) != "accept":
-                        c, called = llm[sid][i], True
+                        c, called = llm_src[sid][i], True
                         stats[system][0] += 1
                     final.append(c)
                 stats[system][2] += called
@@ -121,7 +143,7 @@ def main() -> None:
 
         rows = {}
         ids_all = sorted(labels)
-        for system in ("ragas", "llm", "jev", "hybrid", "hybrid_recal"):
+        for system in ("ragas", *systems):
             if system == "ragas":
                 ap = ragas
                 soft = None
@@ -146,7 +168,7 @@ def main() -> None:
         report[lang] = {
             "rows": rows,
             "hybrid": {"escalated_unit_rate": stats["hybrid"][0] / stats["hybrid"][1], "llm_calls_per_sample": stats["hybrid"][2] / len(jev), "calibration_units": n_cal},
-            "hybrid_recal": {"escalated_unit_rate": stats["hybrid_recal"][0] / stats["hybrid_recal"][1], "llm_calls_per_sample": stats["hybrid_recal"][2] / len(jev)},
+            "routing": {k: {"escalated_unit_rate": v[0] / v[1], "llm_calls_per_sample": v[2] / len(jev)} for k, v in stats.items()},
             "ragas_latency_p50": percentile(ragas_lat, 0.5) if ragas_lat else None,
             "ragas_errors": sum(1 for r in ragas_rows if r["error"]),
         }
@@ -155,6 +177,8 @@ def main() -> None:
     names = {
         "ragas": "RAGAS ContextPrecision (reference 사용)", "llm": "LLM Judge (gpt-6-sol)", "jev": "JEV만",
         "hybrid": "Hybrid (기본 보정 + routing)", "hybrid_recal": "Hybrid (이 도메인 라벨로 재보정 + routing)",
+        "llm_v3": "LLM Judge v3 (reference 사용)", "jev_v3": "JEV만 v3 (reference 사용)",
+        "hybrid_v3_recal": "Hybrid v3 (reference 사용, 재보정 + routing)",
     }
     for lang in LANGS:
         rep = report[lang]
@@ -167,10 +191,9 @@ def main() -> None:
                 f"| {names[s]} | {f(r['ap_pearson'])} / {f(r['ap_spearman'])} / {f(r['ap_kendall'])} | {f(r['ap_mae'])} "
                 f"| {f(r['soft_pearson_precision'])} / {f(r['soft_mae_precision'])} | {f(u['f1']) + ' / ' + f(u['kappa']) if u else '–'} |"
             )
-        h, hr = rep["hybrid"], rep["hybrid_recal"]
-        print(
-            f"Hybrid 재보정: 재판정 unit {hr['escalated_unit_rate'] * 100:.1f}%, 샘플당 LLM 호출 {hr['llm_calls_per_sample']:.2f}"
-        )
+        h = rep["hybrid"]
+        for system, r in rep["routing"].items():
+            print(f"- {names[system]}: 재판정 unit {r['escalated_unit_rate'] * 100:.1f}%, 샘플당 LLM 호출 {r['llm_calls_per_sample']:.2f}")
         print(
             f"\nHybrid: 재판정 unit {h['escalated_unit_rate'] * 100:.1f}%, 샘플당 LLM 호출 {h['llm_calls_per_sample']:.2f} "
             f"(보정 학습 unit {h['calibration_units']}개, 이 세트의 질문 제외). RAGAS: 샘플당 LLM 호출 5 (context마다 1), "

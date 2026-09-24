@@ -58,7 +58,7 @@ class Evaluator:
         conf_audit: float = 0.60,
         pii_masking: bool = True,
         custom_pii_terms: list[str] | None = None,
-        chunk_relevance_version: str = Q.CHUNK_RELEVANCE_V2,
+        chunk_relevance_version: str = Q.CHUNK_RELEVANCE_V3,  # falls back to v2 without a reference
         claim_support_version: str = Q.CLAIM_SUPPORT,
         statement_relevance_version: str = Q.STATEMENT_RELEVANCE_V2,
         answer_scale_version: str | None = Q.ANSWER_RELEVANCE_SCALE_V2,
@@ -235,8 +235,14 @@ class Evaluator:
         units = [EvalUnit(unit_id=f"chunk_{i}", kind="chunk", index=i, text=c) for i, c in enumerate(s.contexts)]
         if not units:
             return _MetricOutput(M.context_precision([]))
-        questions = [Q.chunk_relevance(u.unit_id, u.index, self.chunk_relevance_version) for u in units]
+        version = self.chunk_relevance_version
         state = {"question": s.question, "contexts": s.contexts}
+        if version == Q.CHUNK_RELEVANCE_V3:
+            if s.reference:
+                state["reference"] = s.reference
+            else:
+                version = Q.CHUNK_RELEVANCE_V2  # v3 needs a reference answer
+        questions = [Q.chunk_relevance(u.unit_id, u.index, version) for u in units]
         records, usage, routing = await self._judge("context_precision", state, units, questions, self._lang(s))
         return _MetricOutput(self._score("context_precision", records), records, usage, routing)
 
