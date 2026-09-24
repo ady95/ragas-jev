@@ -1,0 +1,42 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# RAGAS-JEV cache / outputs
+.cache/
+results/
+*.results.jsonl
+review*.csv
+benchmark/reports/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+
+# Test / tooling
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Generated benchmark data (rebuild with benchmark/prepare_*.py)
+benchmark/datasets/miracl_*/
+benchmark/datasets/ragtruth_*/
+benchmark/datasets/ko_hallu_*/
+benchmark/datasets/recall_*/
+benchmark/datasets/relevancy_*/
