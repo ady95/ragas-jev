@@ -1,5 +1,15 @@
 # RAGAS-JEV 평가 항목 인포그래픽 생성 프롬프트
 
+## 2026-09-26 수정: 벤치마크 제외
+
+내장 image_gen 도구로 기존 이미지를 수정했습니다. 아래 최초 생성 프롬프트는 이력으로 보존합니다.
+
+```text
+Edit the provided RAGAS-JEV Korean infographic for README use. Remove the entire bottom benchmark section: heading "RAGAS와 비교한 대표 벤치마크", higher-is-better icon, all comparison table rows, all numeric results, and the two notes under the table. Remove the entire "해석 시 참고" footer too, including benchmark qualifications, source/version/date text. Preserve all content above that section: title, subtitle, the LLM → JEV → 프로그램 flow, probability-average strip, all four metric cards (01 Context Precision, 02 Context Recall, 03 Faithfulness, 04 Answer Relevancy), and full-width 05 Evaluation Uncertainty panel, with original exact text, icons and colors. Make the image end cleanly just below the Evaluation Uncertainty panel with a small balanced white margin. Reflow to a compact near-square canvas, no blank void where table was. Preserve original navy/teal/blue/lavender palette, white background, clean Korean sans-serif type and sharp legibility. No new content or benchmark text. Output exactly one polished high-resolution image.
+```
+
+## 최초 생성
+
 - 생성 방식: built-in image_gen
 - 원본 문서: `docs/ragas-jev_평가항목.md`
 - 이미지: `ragas-jev-evaluation-infographic.png`

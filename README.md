@@ -1,11 +1,27 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ady95/ragas-jev/main/docs/assets/ragas-jev-logo.png" alt="RAGAS-JEV — 정밀한 평가를 상징하는 버니어캘리퍼스 로고" width="640" />
+  <img src="docs/assets/ragas-jev-logo-measuring-jev.png" alt="RAGAS-JEV — 버니어캘리퍼스로 JEV 글자의 가로 폭을 측정하는 로고" width="640" />
 </p>
-
-<h1 align="center">RAGAS-JEV</h1>
 
 <p align="center">
   <strong>RAG의 검색 품질과 답변 신뢰도를, 판단 근거와 함께 평가하세요.</strong>
+</p>
+
+<p align="center">
+  <a href="https://pypi.org/project/ragas-jev/">
+    <img alt="PyPI version" src="https://img.shields.io/pypi/v/ragas-jev.svg">
+  </a>
+  <a href="https://www.python.org/">
+    <img alt="Made with Python" src="https://img.shields.io/badge/Made%20with-Python-1f425f.svg?color=purple">
+  </a>
+  <a href="https://pypi.org/project/ragas-jev/">
+    <img alt="Supported Python versions" src="https://img.shields.io/pypi/pyversions/ragas-jev.svg">
+  </a>
+  <a href="https://github.com/ady95/ragas-jev/blob/main/LICENSE">
+    <img alt="License Apache-2.0" src="https://img.shields.io/github/license/ady95/ragas-jev.svg?color=green">
+  </a>
+  <a href="https://pepy.tech/projects/ragas-jev">
+    <img alt="ragas-jev downloads per month" src="https://static.pepy.tech/badge/ragas-jev/month">
+  </a>
 </p>
 
 <p align="center">
@@ -82,8 +98,7 @@ ragas-jev init --user   # 어느 폴더에서 실행해도 읽는 사용자 설�
 
 1. `--env-file` 옵션 또는 `RAGAS_JEV_ENV_FILE` 환경변수로 지정한 파일
 2. 현재 폴더의 `.env`
-3. 사용자 설정 파일: Windows `%APPDATA%
-agas-jev\.env`, macOS·Linux `~/.config/ragas-jev/.env`
+3. 사용자 설정 파일: Windows `%APPDATA%\ragas-jev\.env`, macOS·Linux `~/.config/ragas-jev/.env`
 
 ```bash
 ragas-jev --env-file ./prod.env evaluate -i data.jsonl -o results/out.jsonl
@@ -166,7 +181,7 @@ ragas-jev evaluate --help
 
 ## 평가 지표
 
-![RAGAS-JEV의 네 가지 평가 지표와 판정 신뢰도, RAGAS와의 대표 벤치마크 비교](https://raw.githubusercontent.com/ady95/ragas-jev/main/docs/assets/ragas-jev-evaluation-infographic.png)
+![RAGAS-JEV의 네 가지 평가 지표와 판정 신뢰도](docs/assets/ragas-jev-evaluation-infographic.png)
 
 평가 방식과 비교 조건은 [평가 항목 상세 문서](https://github.com/ady95/ragas-jev/blob/main/docs/ragas-jev_평가항목.md)를 참고하세요.
 
