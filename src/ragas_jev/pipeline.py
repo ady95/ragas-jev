@@ -56,7 +56,7 @@ class Evaluator:
         threshold: float = 0.5,
         conf_accept: float = 0.85,
         conf_audit: float = 0.60,
-        pii_masking: bool = True,
+        pii_masking: bool = False,
         custom_pii_terms: list[str] | None = None,
         chunk_relevance_version: str = Q.CHUNK_RELEVANCE_V3,  # falls back to v2 without a reference
         claim_support_version: str = Q.CLAIM_SUPPORT,

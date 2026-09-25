@@ -85,10 +85,19 @@ async def test_pii_is_masked_before_reaching_the_judge():
             return await super().evaluate(state, questions)
 
     sample = SAMPLE.model_copy(update={"answer": "담당자 연락처는 010-1234-5678 입니다."})  # synthetic
-    result = await _evaluator(SpyJudge()).evaluate_sample(sample)
+    evaluator = _evaluator(SpyJudge())
+    evaluator.pii_masking = True
+    result = await evaluator.evaluate_sample(sample)
     assert all("010-1234-5678" not in s for s in seen_states)
     assert "010-1234-5678" not in result.model_dump_json()
     assert result.evaluation_model["pii_masked"] == {"PHONE": 1}
+
+
+async def test_pii_masking_is_off_by_default():
+    sample = SAMPLE.model_copy(update={"answer": "담당자 연락처는 010-1234-5678 입니다."})  # synthetic
+    result = await _evaluator().evaluate_sample(sample)
+    assert "pii_masked" not in result.evaluation_model
+    assert any("010-1234-5678" in r.unit.text for r in result.units)
 
 
 async def test_judge_failure_is_isolated_per_sample():

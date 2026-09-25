@@ -51,10 +51,12 @@ class Settings(BaseSettings):
 
     # Phase 5: escalation and calibration
     ragas_jev_audit_enabled: bool = True
+    # Calibration is opt in: RAGAS_JEV_CALIBRATION=true, a RAGAS_JEV_CALIBRATION_FILE, or --calibrate.
+    ragas_jev_calibration: bool = False
     ragas_jev_calibration_file: Path | None = None  # default: packaged calibration for the pinned JEV model
 
     # Data protection / storage
-    ragas_jev_pii_masking: bool = True
+    ragas_jev_pii_masking: bool = False  # opt in with RAGAS_JEV_PII_MASKING=true or --pii-masking
     ragas_jev_cache_dir: Path = Path(".cache/ragas_jev")
 
     @property
@@ -64,6 +66,10 @@ class Settings(BaseSettings):
     @property
     def preprocessor_model(self) -> str:
         return self.ragas_jev_preprocessor_model or self.openai_model
+
+    @property
+    def calibration_enabled(self) -> bool:
+        return self.ragas_jev_calibration or self.ragas_jev_calibration_file is not None
 
     @property
     def calibration_path(self) -> Path:

@@ -28,7 +28,7 @@
 
 - **네 가지 평가 지표** — Context Precision, Context Recall, Faithfulness, Answer Relevancy로 검색과 생성을 함께 평가합니다.
 - **평가 단위별 진단** — 답변의 claim·statement와 검색 chunk별 판정, 수치 대조 정보를 확인합니다.
-- **불확실한 판단 재검토** — 확률 보정과 routing 정책을 적용하고, 필요한 판정을 LLM Auditor 또는 Strong Judge로 보냅니다.
+- **불확실한 판단 재검토** — routing 정책으로 필요한 판정을 LLM Auditor 또는 Strong Judge로 보냅니다. 확률 보정은 선택해서 적용합니다.
 - **사람 검토와 도메인 재보정** — JEV와 LLM의 불일치를 CSV로 검토하고, 도메인 라벨로 확률 보정을 다시 학습합니다.
 - **반복 실행 지원** — 판정·추출 캐시와 JSONL 체크포인트로 결과를 재사용하고 중단된 평가를 이어갑니다.
 - **오프라인 실행** — MockJudge와 문장 분리 추출기로 외부 API 없이 파이프라인을 확인합니다.
@@ -37,7 +37,7 @@
 
 ```mermaid
 flowchart LR
-    A[질문 · 답변 · 검색 문서 · 정답] --> B[PII Guard]
+    A[질문 · 답변 · 검색 문서 · 정답] --> B[PII Guard · 선택]
     B --> C[전처리 및 평가 단위 구성]
     C --> D[JEV 판단]
     D --> E[확률 보정 및 routing]
@@ -72,7 +72,7 @@ ragas-jev init --user   # 어느 폴더에서 실행해도 읽는 사용자 설�
 |---|---|
 | `TYPESAFE_API_KEY` | JEV(TypeSafe System One) API 키 |
 | `OPENAI_API_KEY` | claim·statement 추출과 LLM 재판정에 쓰는 LLM의 API 키 |
-| `OPENAI_BASE_URL` | OpenAI 호환 엔드포인트 주소. 비워 두면 OpenAI API를 사용 |
+| `OPENAI_BASE_URL` | LLM 엔드포인트 주소. 기본값은 OpenAI API(`https://api.openai.com/v1`)이며, 다른 OpenAI 호환 서버를 쓰면 그 주소로 변경 |
 | `OPENAI_MODEL` | 추출에 사용할 모델 |
 | `TYPESAFE_DEFAULT_MODEL` | JEV 모델 버전. 기본값 `jev-1.13.0` (기본 보정 파일과 짝을 이룸) |
 
@@ -82,7 +82,8 @@ ragas-jev init --user   # 어느 폴더에서 실행해도 읽는 사용자 설�
 
 1. `--env-file` 옵션 또는 `RAGAS_JEV_ENV_FILE` 환경변수로 지정한 파일
 2. 현재 폴더의 `.env`
-3. 사용자 설정 파일: Windows `%APPDATA%agas-jev\.env`, macOS·Linux `~/.config/ragas-jev/.env`
+3. 사용자 설정 파일: Windows `%APPDATA%
+agas-jev\.env`, macOS·Linux `~/.config/ragas-jev/.env`
 
 ```bash
 ragas-jev --env-file ./prod.env evaluate -i data.jsonl -o results/out.jsonl
@@ -110,7 +111,7 @@ export OPENAI_API_KEY=...
 
 ```bash
 ragas-jev init --sample   # .env와 sample_ko.jsonl 생성
-ragas-jev evaluate -i sample_ko.jsonl -o results/mock.jsonl --judge mock --extractor sentence --no-audit --no-calibration
+ragas-jev evaluate -i sample_ko.jsonl -o results/mock.jsonl --judge mock --extractor sentence --no-audit
 ```
 
 MockJudge의 점수는 동작 확인용입니다. 실제 품질 평가에는 아래 JEV 실행을 사용하세요.
@@ -124,7 +125,7 @@ ragas-jev healthcheck
 ragas-jev evaluate -i sample_ko.jsonl -o results/sample.jsonl
 ```
 
-기본 실행은 LLM 추출기, JEV Judge, 확률 보정, LLM 보조 검토를 사용합니다. 결과는 샘플당 한 줄씩 JSONL에 추가되며, 같은 출력 파일로 재실행하면 이미 기록된 `sample_id`를 건너뜁니다. 설정을 바꿔 비교할 때는 새 출력 파일을 지정하세요.
+기본 실행은 LLM 추출기, JEV Judge, LLM 보조 검토를 사용합니다. 확률 보정은 기본으로 꺼져 있으며 `--calibrate`로 켭니다. 결과는 샘플당 한 줄씩 JSONL에 추가되며, 같은 출력 파일로 재실행하면 이미 기록된 `sample_id`를 건너뜁니다. 설정을 바꿔 비교할 때는 새 출력 파일을 지정하세요.
 
 ### 3. 필요한 지표만 실행하기
 
@@ -133,6 +134,10 @@ ragas-jev evaluate -i data.jsonl -o results/selected.jsonl --metrics context_pre
 
 # LLM 보조 판단 없이 JEV로 평가 (LLM 전처리는 유지)
 ragas-jev evaluate -i data.jsonl -o results/jev_only.jsonl --no-audit
+
+# 확률 보정 적용: 패키지의 기본 보정 파일 또는 도메인 보정 파일
+ragas-jev evaluate -i data.jsonl -o results/calibrated.jsonl --calibrate
+ragas-jev evaluate -i data.jsonl -o results/domain.jsonl --calibration domain_calibration.json
 
 # 전체 옵션 확인
 ragas-jev evaluate --help
@@ -238,7 +243,7 @@ uv run pytest -m live
 
 ## 데이터 보호
 
-평가할 텍스트는 LLM 엔드포인트와 JEV(TypeSafe) API로 전송됩니다. 두 서비스가 어느 나라에 있는지 확인하세요. 전송 전에 기본 설정에서 PII Guard가 개인정보를 마스킹하지만 모든 개인정보를 찾는다고 보장하지는 않습니다. **민감한 데이터는 조직의 보안·법무 검토를 거친 뒤 사용하세요.**
+평가할 텍스트는 LLM 엔드포인트와 JEV(TypeSafe) API로 전송됩니다. 두 서비스가 어느 나라에 있는지 확인하세요. PII 마스킹은 **기본으로 꺼져 있습니다.** 개인정보가 섞일 수 있는 데이터는 `--pii-masking` 옵션이나 `RAGAS_JEV_PII_MASKING=true`로 켜세요. 켜면 이메일, 전화번호, 카드·계좌번호, 주민·사업자등록번호를 자리표시자로 바꿔 전송합니다. 규칙 기반이라 이름이나 주소는 찾지 못하므로, **민감한 데이터는 조직의 보안·법무 검토를 거친 뒤 사용하세요.**
 
 ## 관련 문서
 
