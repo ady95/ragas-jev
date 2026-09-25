@@ -25,7 +25,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ragas_jev.privacy.pii_guard import mask_sample
+from ragas_jev.privacy.pii_guard import PiiMasker, mask_sample
 from ragas_jev.schemas import RagSample, SampleResult
 from ragas_jev.scoring.calibration import Calibrator, IsotonicMap, fit_isotonic
 
@@ -56,10 +56,12 @@ def sample_units(
     per_key: int = 300,
     bins: int = 10,
     seed: int = 13,
-    pii_masking: bool = True,
+    pii_masking: bool = False,
 ) -> list[dict]:
     """Rows for a label sheet: up to `per_key` Noul units per question × language."""
-    masked = {sid: mask_sample(s)[0] if pii_masking else s for sid, s in samples.items()}
+    # One masker per sample, so unit texts from unmasked runs get the same placeholders.
+    maskers = {sid: PiiMasker() for sid in samples} if pii_masking else {}
+    masked = {sid: mask_sample(s, masker=maskers[sid])[0] if pii_masking else s for sid, s in samples.items()}
     pools: dict[tuple[str, str], list[list[tuple]]] = defaultdict(lambda: [[] for _ in range(bins)])
     for r in results:
         sample = masked.get(r.sample_id)
@@ -94,7 +96,7 @@ def sample_units(
                     "lang": lang,
                     "jev_p": f"{rec.decision.jev_p:.4f}",
                     "question": sample.question,
-                    "unit_text": rec.unit.text,
+                    "unit_text": maskers[sample_id].mask(rec.unit.text) if pii_masking else rec.unit.text,
                     "evidence": _evidence(rec.metric, rec.unit.index, sample),
                     "label": "",
                 }

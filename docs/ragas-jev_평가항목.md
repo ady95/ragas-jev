@@ -25,10 +25,10 @@
 | 판정 | LLM이 0/1(일부는 0/1/2)을 답한다 | **JEV**가 판정한다. Noul은 참일 확률 p(0~1)를, Score와 Choice는 확률분포를 준다. 한 샘플의 한 metric을 **요청 한 번**에 판정한다 |
 | 점수 계산 | ragas 공식 | 결정적 코드([metrics.py](../src/ragas_jev/scoring/metrics.py)). 같은 판정이면 비트 단위로 같은 점수가 나온다 |
 | 판정 신뢰도 | 없음 | 단위마다 confidence가 있다 (Noul은 `max(p, 1−p)`). metric마다 평균, 최솟값, 저신뢰 비율을 낸다 |
-| 확률 보정 | 없음 | 질문 × 언어별 isotonic 보정 (`calibration_jev-1.13.0.json`). 도메인이 바뀌면 재보정해야 한다 |
+| 확률 보정 | 없음 | 선택 기능(기본 꺼짐, `--calibrate`). 질문 × 언어별 isotonic 보정 (`calibration_jev-1.13.0.json`). 도메인이 바뀌면 재보정해야 한다 |
 | 재검증 (routing) | 없음 | confidence가 낮은 단위만 LLM이 다시 판정한다. metric마다 정책이 다르다 (5.2절) |
 | 사람 검수 | 없음 | LLM 판정이 JEV와 반대로 나온 단위를 검수 큐(CSV)로 내보낸다. 사람 라벨을 받으면 점수를 다시 계산한다 (`rescore`) |
-| 개인정보 | 없음 | 외부 호출 전에 PII를 마스킹한다. 마스킹이 실패하면 그 샘플은 보내지 않는다 (`status=blocked_pii`) |
+| 개인정보 | 없음 | 선택 기능(기본 꺼짐, `--pii-masking`). 켜면 외부 호출 전에 PII를 마스킹하고, 마스킹이 실패한 샘플은 보내지 않는다 (`status=blocked_pii`) |
 | 재현성 (같은 입력 2회, Faithfulness 응답 판정이 뒤집힌 비율) | 6.2% | JEV 0.0%. 캐시를 쓰면 완전히 같다 |
 | 샘플당 판정용 LLM 호출 | 1~5회 | 0~0.43회 (Hybrid). JEV만 쓰면 0회 |
 
@@ -185,4 +185,4 @@ RAGAS-JEV에서 계산할 수 없는 항목은 점수가 `null`이고, 이유가
 2. **분해는 여전히 LLM이 한다.** Faithfulness, Context Recall, Answer Relevancy는 LLM 분해 품질의 영향을 받는다. 판정 단계만 결정적이다.
 3. **벤치마크 데이터의 일부는 합성이다.** 한국어 Faithfulness, Context Recall 전체, reference 기반 Context Precision의 reference, Answer Relevancy의 MIRACL 세트는 `gpt-6-astra`로 만들었다.
 4. **도메인이 일반적이다.** 모두 Wikipedia와 웹 기반 데이터다. 금융·의료 같은 전문 도메인에서는 다시 검증해야 한다.
-5. **외부 호출이 모두 국외로 간다.** JEV(TypeSafe)와 LLM 프록시(OpenAI)가 모두 국외 서버다. PII 마스킹을 하지만, 실제 고객 데이터를 쓰려면 보안·법무 검토를 먼저 받아야 한다.
+5. **외부 호출이 모두 국외로 간다.** JEV(TypeSafe)와 LLM 프록시(OpenAI)가 모두 국외 서버다. PII 마스킹은 기본으로 꺼져 있고 켜도 규칙 기반이다. 실제 고객 데이터를 쓰려면 마스킹을 켜고, 보안·법무 검토를 먼저 받아야 한다.

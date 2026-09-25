@@ -32,7 +32,7 @@ async def test_sample_units_masks_pii_and_spreads_over_p():
     samples = _samples(30)
     evaluator = Evaluator(MockJudge(), SentenceSplitExtractor())
     results = [await evaluator.evaluate_sample(s, ("context_precision", "faithfulness")) for s in samples]
-    rows = sample_units(results, {s.sample_id: s for s in samples}, per_key=20)
+    rows = sample_units(results, {s.sample_id: s for s in samples}, per_key=20, pii_masking=True)
     by_key = {}
     for r in rows:
         by_key.setdefault((r["question_id"], r["lang"]), []).append(r)

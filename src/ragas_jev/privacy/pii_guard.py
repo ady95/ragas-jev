@@ -1,7 +1,8 @@
 """Mask PII before any text leaves the process (plan section 3.2).
 
-Every external call path (LLM proxy, JEV) is outside the country, so masking
-is a mandatory gate, not an option. One `PiiMasker` is used per sample so the
+Off by default; enable it (RAGAS_JEV_PII_MASKING=true or `--pii-masking`) whenever
+the data may hold personal information, because every external call path (LLM
+endpoint, JEV) sends the text out. One `PiiMasker` is used per sample so the
 same value maps to the same placeholder across question, answer, contexts, and
 reference, which keeps entailment judgments intact. The reverse mapping lives
 only in memory and is never written anywhere.
@@ -70,8 +71,11 @@ class PiiMasker:
         return dict(self._counts)
 
 
-def mask_sample(sample: RagSample, custom_terms: list[str] | None = None) -> tuple[RagSample, dict[str, int]]:
-    masker = PiiMasker(custom_terms=custom_terms or [])
+def mask_sample(
+    sample: RagSample, custom_terms: list[str] | None = None, masker: PiiMasker | None = None
+) -> tuple[RagSample, dict[str, int]]:
+    """Mask every text field; pass `masker` to keep using its placeholders for related text."""
+    masker = masker or PiiMasker(custom_terms=custom_terms or [])
     masked = sample.model_copy(
         update={
             "question": masker.mask(sample.question),

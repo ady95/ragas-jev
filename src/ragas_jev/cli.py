@@ -101,8 +101,10 @@ async def _healthcheck() -> bool:
         client = AsyncOpenAI(base_url=settings.openai_base_url, api_key=settings.openai_api_key.get_secret_value())
         served = sorted(m.id for m in (await client.models.list()).data)
         typer.echo(f"  OK  models served: {', '.join(served)}")
-        missing = [m for m in settings.available_model_list if m not in served]
-        extra = [m for m in served if m not in settings.available_model_list]
+        # AVAILABLE_MODELS is optional; compare against it only when it is set.
+        expected = settings.available_model_list
+        missing = [m for m in expected if m not in served]
+        extra = [m for m in served if m not in expected] if expected else []
         if missing:
             typer.echo(f"  WARN AVAILABLE_MODELS not served: {', '.join(missing)}")
         if extra:
@@ -154,8 +156,10 @@ def evaluate(
     resume: bool = typer.Option(True, help="Skip sample_ids already in --output"),
     limit: Optional[int] = typer.Option(None, help="Evaluate at most N samples"),
     audit: Optional[bool] = typer.Option(None, "--audit/--no-audit", help="Escalate low-confidence JEV decisions to LLM judges (default: RAGAS_JEV_AUDIT_ENABLED)"),
-    calibration: Optional[Path] = typer.Option(None, help="Calibration JSON (default: RAGAS_JEV_CALIBRATION_FILE, else the packaged file)"),
-    no_calibration: bool = typer.Option(False, "--no-calibration", help="Use raw JEV probabilities"),
+    calibrate: Optional[bool] = typer.Option(None, "--calibrate/--no-calibrate", help="Calibrate JEV probabilities (default: off, or RAGAS_JEV_CALIBRATION / RAGAS_JEV_CALIBRATION_FILE)"),
+    calibration: Optional[Path] = typer.Option(None, help="Calibration JSON to apply; implies --calibrate (default file: RAGAS_JEV_CALIBRATION_FILE, else the packaged one)"),
+    no_calibration: bool = typer.Option(False, "--no-calibration", hidden=True, help="Same as --no-calibrate (0.1.0)"),
+    pii_masking: Optional[bool] = typer.Option(None, "--pii-masking/--no-pii-masking", help="Mask PII before sending text out (default: RAGAS_JEV_PII_MASKING, off)"),
 ) -> None:
     """Evaluate RAG samples and append one result per line to --output."""
     selected = METRICS if metrics == "all" else tuple(m.strip() for m in metrics.split(",") if m.strip())
@@ -170,8 +174,13 @@ def evaluate(
         return
     settings = get_settings()
     use_audit = settings.ragas_jev_audit_enabled if audit is None else audit
-    calibrator = None if no_calibration else _load_calibrator(calibration or settings.calibration_path)
-    results = asyncio.run(_evaluate(samples, selected, judge, extractor, concurrency, cache, output, use_audit, calibrator))
+    calibrator = _choose_calibrator(settings, False if no_calibration else calibrate, calibration)
+    use_masking = settings.ragas_jev_pii_masking if pii_masking is None else pii_masking
+    if not use_masking and (judge != "mock" or extractor == "llm"):
+        typer.echo("note: PII masking is off; text is sent to external services as is (enable with --pii-masking)", err=True)
+    results = asyncio.run(
+        _evaluate(samples, selected, judge, extractor, concurrency, cache, output, use_audit, calibrator, use_masking)
+    )
     _print_summary(results)
 
 
@@ -185,6 +194,7 @@ async def _evaluate(
     output: Path,
     use_audit: bool = False,
     calibrator: Calibrator | None = None,
+    pii_masking: bool = False,
 ) -> list[SampleResult]:
     settings = get_settings()
     inner = MockJudge() if judge_name == "mock" else JevJudge.from_settings(settings)
@@ -198,6 +208,7 @@ async def _evaluate(
     evaluator = Evaluator.from_settings(settings, judge, units)
     evaluator.calibrator = calibrator
     evaluator.router = router
+    evaluator.pii_masking = pii_masking
     output.parent.mkdir(parents=True, exist_ok=True)
 
     with output.open("a", encoding="utf-8") as sink:
@@ -221,6 +232,20 @@ async def _evaluate(
                 if router.strong is not None:
                     await router.strong.aclose()
             extraction_cache.close()
+
+
+def _choose_calibrator(settings, calibrate: bool | None, path: Path | None) -> Calibrator | None:
+    """Off unless --calibrate, --calibration PATH, or the calibration settings turn it on."""
+    if calibrate is False:
+        if path is not None:
+            raise typer.BadParameter("--calibration conflicts with --no-calibrate", param_hint="--calibration")
+        return None
+    if not (calibrate or path is not None or settings.calibration_enabled):
+        return None
+    path = path or settings.calibration_path
+    if not path.is_file():
+        raise typer.BadParameter(f"calibration file {path} does not exist", param_hint="--calibration")
+    return Calibrator.load(path)
 
 
 def _load_calibrator(path: Path | None) -> Calibrator | None:
@@ -298,14 +323,16 @@ def calibration_sample(
     out: Path = typer.Option(..., "--out", "-o", help="Label sheet CSV to write"),
     per_key: int = typer.Option(300, help="Units per question x language (spread over JEV p)"),
     seed: int = typer.Option(13),
+    pii_masking: Optional[bool] = typer.Option(None, "--pii-masking/--no-pii-masking", help="Mask PII in the sheet (default: RAGAS_JEV_PII_MASKING, off)"),
 ) -> None:
-    """Write a label sheet for re-calibration (PII-masked question, unit and evidence)."""
+    """Write a label sheet for re-calibration (question, unit and evidence text)."""
     settings = get_settings()
+    use_masking = settings.ragas_jev_pii_masking if pii_masking is None else pii_masking
     sample_map = {
         s.sample_id: s
         for s in (RagSample.model_validate_json(l) for l in samples.read_text(encoding="utf-8").splitlines() if l.strip())
     }
-    rows = sample_units(_read_results(results), sample_map, per_key=per_key, seed=seed, pii_masking=settings.ragas_jev_pii_masking)
+    rows = sample_units(_read_results(results), sample_map, per_key=per_key, seed=seed, pii_masking=use_masking)
     write_sheet(rows, out)
     counts: dict[str, int] = {}
     for row in rows:
@@ -340,7 +367,7 @@ def calibration_fit(
     for k in report.keys:
         status = "fitted" if k.fitted else k.note
         typer.echo(f"  {k.key} | {k.labels} | {k.positive_rate:.2f} | {fmt(k.ece_raw)} | {fmt(k.ece_base)} | {fmt(k.ece_new_cv)} | {status}")
-    typer.echo(f"Use it with `ragas-jev evaluate --calibration {out}` or RAGAS_JEV_CALIBRATION_FILE={out}")
+    typer.echo(f"Use it with `ragas-jev evaluate --calibration {out}` or set RAGAS_JEV_CALIBRATION_FILE={out}")
 
 
 if __name__ == "__main__":
