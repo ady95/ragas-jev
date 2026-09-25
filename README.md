@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/ragas-jev-logo-measuring-jev.png" alt="RAGAS-JEV — 버니어캘리퍼스로 JEV 글자의 가로 폭을 측정하는 로고" width="640" />
+  <img src="docs/assets/ragas-jev-logo-measuring-ragas.png" alt="RAGAS-JEV — 버니어캘리퍼스로 RAGAS 글자의 가로 폭을 측정하여 더 정밀한 평가를 상징하는 로고" width="640" />
 </p>
 
 <p align="center">
