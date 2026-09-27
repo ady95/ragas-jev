@@ -4,7 +4,7 @@
 - JEV 모델: `jev-1.13.0`, 문항 `ref_claim_coverage.v1`, contexts `joint`
 - reference claim 추출: `gpt-6-luna` + `ref_claim_extraction.v1`. 모든 구성이 **같은 claim**을 판정한다
 - 비교 LLM Judge: 기준선 `gpt-6-sol`, Auditor `gpt-6-luna` (같은 v1 문항, `seed=7`, 결정적이지 않음)
-- 관련 문서: [구현계획서](../구현계획서.md) Phase 3, [Phase 2 리포트](phase2_faithfulness.md)
+- 관련 문서: [Phase 2 리포트](phase2_faithfulness.md)
 
 ## 1. 요약
 

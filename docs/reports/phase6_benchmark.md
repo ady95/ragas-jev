@@ -2,7 +2,7 @@
 
 - 실행일: 2026-09-24 (후속 비교 2건 추가: reference 기반 Context Precision, RAGAS Answer Relevancy)
 - 2026-09-26: ragas-jev 0.2.0 기본값(보정·PII 마스킹 꺼짐)으로 다시 계산한 결과를 [9절](#9-020-기본값으로-다시-계산-2026-09-26)에 추가
-- 관련 문서: [구현계획서](../구현계획서.md) Phase 6, [설계방향](../RAGAS-JEV_설계방향.md) 17장, Phase [1](phase1_context_precision.md) · [2](phase2_faithfulness.md) · [3](phase3_context_recall.md) · [4](phase4_answer_relevancy.md) · [5](phase5_routing_calibration.md) 리포트, [도메인 재보정 가이드](../도메인_재보정_가이드.md)
+- 관련 문서: [설계방향](../RAGAS-JEV_설계방향.md) 17장, Phase [1](phase1_context_precision.md) · [2](phase2_faithfulness.md) · [3](phase3_context_recall.md) · [4](phase4_answer_relevancy.md) · [5](phase5_routing_calibration.md) 리포트, [도메인 재보정 가이드](../도메인_재보정_가이드.md)
 
 ## 1. 요약
 

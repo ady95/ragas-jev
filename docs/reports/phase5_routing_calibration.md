@@ -3,7 +3,7 @@
 - 실행일: 2026-09-24
 - JEV 모델: `jev-1.13.0`
 - LLM Judge 역할: Auditor `gpt-6-luna`, Strong Judge `gpt-6-sol` (처음 계획한 `gpt-6-astra`에서 변경, 3.2절), 비교 기준선 `gpt-6-sol`
-- 관련 문서: [구현계획서](../구현계획서.md) Phase 5, [Phase 1](phase1_context_precision.md) · [2](phase2_faithfulness.md) · [3](phase3_context_recall.md) 리포트
+- 관련 문서: [Phase 1](phase1_context_precision.md) · [2](phase2_faithfulness.md) · [3](phase3_context_recall.md) 리포트
 
 ## 1. 요약
 

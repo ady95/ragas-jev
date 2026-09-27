@@ -4,7 +4,6 @@
 - JEV 모델: `jev-1.13.0`
 - statement 추출: `gpt-6-luna` + `statement_extraction.v1`. 모든 구성이 **같은 statement**를 판정한다
 - 비교 LLM Judge: 기준선 `gpt-6-sol`, Auditor `gpt-6-luna` (statement 판정만. LLM Judge는 Score 문항을 지원하지 않아 scale 점수는 JEV만 있다)
-- 관련 문서: [구현계획서](../구현계획서.md) Phase 4
 
 Answer Relevancy는 두 점수로 낸다.
 

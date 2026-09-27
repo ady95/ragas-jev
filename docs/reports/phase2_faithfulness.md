@@ -4,7 +4,7 @@
 - JEV 모델: `jev-1.13.0`
 - claim 추출: `gpt-6-luna` + `claim_extraction.v1` ([prompts.py](../../src/ragas_jev/preprocess/prompts.py)). 모든 구성이 **같은 claim**을 판정하도록 추출 결과를 캐시로 공유했다
 - 비교 LLM Judge: 기준선 `gpt-6-sol`, Auditor `gpt-6-luna` (`seed=7`, `temperature` 미지정이라 결정적이지 않음)
-- 관련 문서: [구현계획서](../구현계획서.md) Phase 2, [Phase 1 리포트](phase1_context_precision.md)
+- 관련 문서: [Phase 1 리포트](phase1_context_precision.md)
 
 ## 1. 요약
 

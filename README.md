@@ -270,6 +270,5 @@ uv run pytest -m live
 ## 관련 문서
 
 - [설계 방향](https://github.com/ady95/ragas-jev/blob/main/docs/RAGAS-JEV_설계방향.md) — 역할 분리, 평가 지표, 불확실성 설계
-- [구현계획서](https://github.com/ady95/ragas-jev/blob/main/docs/구현계획서.md) — 구성 요소와 단계별 구현·검증 기록
 - [도메인 재보정 가이드](https://github.com/ady95/ragas-jev/blob/main/docs/도메인_재보정_가이드.md) — 라벨 수집과 보정 적용
 - [Ragas 저장소](https://github.com/vibrantlabsai/ragas) — 평가 축과 README 구성 참고

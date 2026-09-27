@@ -1,7 +1,7 @@
 # RAGAS-JEV 평가 항목: 기존 RAGAS와의 비교
 
 - 기준: 2026-09-24, `ragas-jev` main, JEV `jev-1.13.0`, 비교 대상 `ragas` 0.4.3
-- 관련 문서: [설계방향](RAGAS-JEV_설계방향.md), [구현계획서](구현계획서.md), [Phase 6 벤치마크 리포트](reports/phase6_benchmark.md), [도메인 재보정 가이드](도메인_재보정_가이드.md)
+- 관련 문서: [설계방향](RAGAS-JEV_설계방향.md), [Phase 6 벤치마크 리포트](reports/phase6_benchmark.md), [도메인 재보정 가이드](도메인_재보정_가이드.md)
 
 이 문서는 RAGAS-JEV가 구현한 평가 항목을 RAGAS의 같은 항목과 나란히 놓고 정리한다. 각 항목에서 무엇을 재는지, 어떻게 계산하는지, 벤치마크에서 어느 쪽이 나았는지를 다룬다. 수치는 모두 [Phase 6 벤치마크](reports/phase6_benchmark.md)에서 가져왔다. 표기가 "a / b"이면 한국어 / 영어다.
 

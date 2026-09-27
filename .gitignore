@@ -44,3 +44,5 @@ benchmark/datasets/cp_ref_*/
 
 # temporary files
 참고코드/
+# internal documents (not published)
+docs_private/
