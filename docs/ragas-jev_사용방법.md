@@ -1,6 +1,6 @@
 # ragas-jev 사용 방법
 
-- 대상 버전: `ragas-jev` 0.2.0 ([PyPI](https://pypi.org/project/ragas-jev/))
+- 대상 버전: `ragas-jev` 0.3.0 ([PyPI](https://pypi.org/project/ragas-jev/))
 - 관련 문서: [README](../README.md), [평가 항목 비교](ragas-jev_평가항목.md), [도메인 재보정 가이드](도메인_재보정_가이드.md)
 
 `ragas-jev`는 RAG 시스템의 질문·답변·검색 문서를 JSONL로 받아 네 가지 지표로 평가하는 CLI 도구입니다. 지표는 Context Precision, Context Recall, Faithfulness, Answer Relevancy입니다. 아래 순서대로 쓰시면 됩니다.
@@ -111,10 +111,20 @@ ragas-jev review import -i results/out.jsonl -l review.csv -o results/reviewed.j
 
 ## 6. 도메인 재보정 (실서비스 전에 권장)
 
+**라벨 없이 먼저 해 볼 수 있는 것**: `calibration adapt`는 평가 결과만 보고 기본 보정을 이 데이터의 라벨 비율에 맞춥니다. 사람 라벨이 필요 없습니다.
+
+```bash
+ragas-jev evaluate -i data.jsonl -o results/raw.jsonl --no-audit
+ragas-jev calibration adapt -r results/raw.jsonl -o adapted.json
+ragas-jev evaluate -i data.jsonl -o results/adapted.jsonl --calibration adapted.json   # JEV는 캐시 재사용
+```
+
+**사람 라벨로 다시 학습하기**:
+
 기본 보정은 Wikipedia 계열 공개 데이터로 학습했습니다. 서비스 도메인에 쓰려면 그 도메인의 라벨로 다시 학습하는 것이 좋습니다.
 
 ```bash
-ragas-jev calibration sample -r results/out.jsonl -s data.jsonl -o label_sheet.csv
+ragas-jev calibration sample -r results/out.jsonl -s data.jsonl -o label_sheet.csv   # --prelabel: LLM 판정을 llm_label에 미리 채움
 # label 열 작성 (질문 유형 × 언어별로 최소 100개)
 ragas-jev calibration fit -l label_sheet.csv -o domain_calibration.json
 ragas-jev evaluate -i data.jsonl -o results/recal.jsonl --calibration domain_calibration.json

@@ -13,7 +13,7 @@ from ragas_jev.pipeline import Evaluator
 from ragas_jev.preprocess.base import SentenceSplitExtractor
 from ragas_jev.schemas import RagSample
 from ragas_jev.scoring.calibration import Calibrator, IsotonicMap
-from ragas_jev.scoring.recalibration import LabeledUnit, fit_calibration, read_sheets, sample_units, write_sheet
+from ragas_jev.scoring.recalibration import LabeledUnit, fit_calibration, prelabel, read_sheets, sample_units, write_sheet
 
 
 def _samples(n: int) -> list[RagSample]:
@@ -122,3 +122,30 @@ def test_cli_roundtrip(tmp_path, monkeypatch):
     cal = Calibrator.load(tmp_path / "domain_cal.json")
     assert cal.lookup("claim_support.v1", "ko") is not None
     assert cal.lookup("chunk_relevance.v2", "en") is not None  # kept from the packaged base
+    assert 0 < cal.priors["claim_support.v1:ko"] < 1  # the fitted key records its label rate
+
+    # prior-shift adaptation, no labels: the results' own JEV p against the packaged maps
+    result = runner.invoke(app, ["calibration", "adapt", "-r", "results.jsonl", "-o", "adapted.json", "--min-units", "10"])
+    assert result.exit_code == 0, result.output
+    assert "claim_support.v1:ko" in result.output and "adapted" in result.output
+    adapted = Calibrator.load(tmp_path / "adapted.json")
+    assert "prior-adapted" in adapted.source and "claim_support.v1:ko" in adapted.priors
+    result = runner.invoke(app, [
+        "evaluate", "-i", str(samples_path), "-o", "adapted_results.jsonl", "--judge", "mock", "--extractor", "sentence",
+        "--no-audit", "--no-cache", "--metrics", "faithfulness", "--calibration", "adapted.json",
+    ])
+    assert result.exit_code == 0, result.output
+
+
+async def test_prelabel_fills_llm_columns_but_not_label(tmp_path):
+    samples = _samples(12)
+    evaluator = Evaluator(MockJudge(), SentenceSplitExtractor())
+    results = [await evaluator.evaluate_sample(s, ("context_precision", "faithfulness")) for s in samples]
+    sample_map = {s.sample_id: s for s in samples}
+    rows = sample_units(results, sample_map, per_key=20, pii_masking=True)
+    failures = await prelabel(rows, sample_map, MockJudge(), pii_masking=True)
+    assert failures == 0
+    assert all(r["llm_label"] in ("0", "1") and 0 <= float(r["llm_p"]) <= 1 for r in rows)
+    assert all(r["label"] == "" for r in rows)
+    write_sheet(rows, tmp_path / "sheet.csv")
+    assert read_sheets([tmp_path / "sheet.csv"]) == []  # llm_label is only a suggestion

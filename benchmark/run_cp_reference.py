@@ -112,16 +112,19 @@ def main() -> None:
         jev_v3 = load_units(v3_jev_path) if has_v3 else {}
         llm_v3 = load_units(v3_llm_path) if has_v3 else {}
 
-        systems: dict[str, dict[str, list[float]]] = {"llm": llm, "jev": jev, "hybrid": {}, "hybrid_recal": {}}
+        systems: dict[str, dict[str, list[float]]] = {"llm": llm, "jev": jev, "hybrid": {}, "hybrid_recal": {}, "hybrid_raw": {}}
+        identity = lambda sid: (lambda p: p)  # noqa: E731 - 0.2.0 default: no calibration
         variants = [
             ("hybrid", jev, llm, lambda sid: mapping),
+            ("hybrid_raw", jev, llm, identity),
             ("hybrid_recal", jev, llm, (lambda maps: lambda sid: maps[fold_of[sid.rsplit("-", 1)[0]]])(recalibrated(jev, "chunk_relevance.v2"))),
         ]
         if has_v3:
-            systems.update({"llm_v3": llm_v3, "jev_v3": jev_v3, "hybrid_v3_recal": {}})
+            systems.update({"llm_v3": llm_v3, "jev_v3": jev_v3, "hybrid_v3_recal": {}, "hybrid_v3_raw": {}})
             variants.append(
                 ("hybrid_v3_recal", jev_v3, llm_v3, (lambda maps: lambda sid: maps[fold_of[sid.rsplit("-", 1)[0]]])(recalibrated(jev_v3, "chunk_relevance.v3")))
             )
+            variants.append(("hybrid_v3_raw", jev_v3, llm_v3, identity))
         stats = {name_: [0, 0, 0] for name_, *_ in variants}  # escalated units, total units, samples with a call
         for system, jev_src, llm_src, map_for in variants:
             for sid, ps in jev_src.items():
@@ -179,6 +182,8 @@ def main() -> None:
         "hybrid": "Hybrid (기본 보정 + routing)", "hybrid_recal": "Hybrid (이 도메인 라벨로 재보정 + routing)",
         "llm_v3": "LLM Judge v3 (reference 사용)", "jev_v3": "JEV만 v3 (reference 사용)",
         "hybrid_v3_recal": "Hybrid v3 (reference 사용, 재보정 + routing)",
+        "hybrid_raw": "Hybrid 0.2.0 기본값, v2 (보정 없음 + routing)",
+        "hybrid_v3_raw": "**Hybrid 0.2.0 기본값, v3** (reference 사용, 보정 없음 + routing)",
     }
     for lang in LANGS:
         rep = report[lang]

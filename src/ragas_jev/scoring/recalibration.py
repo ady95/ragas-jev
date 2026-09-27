@@ -8,7 +8,11 @@ domain:
   1. sample_units   pick units from evaluation results, spread evenly over
                     JEV p within each question × language, and write a label
                     sheet that includes the (PII-masked) text a reviewer needs
-  2. a person fills the `label` column with 1 (yes) or 0 (no)
+  2. a person fills the `label` column with 1 (yes) or 0 (no). Optionally
+     `prelabel` first asks an LLM judge and writes its verdict to `llm_p` /
+     `llm_label`, for the person to confirm or correct; `label` stays empty,
+     because fitting on LLM verdicts alone copies the LLM's bias
+     (docs/reports/auto_calibration.md)
   3. fit_calibration   fit new maps; keys with too few labels keep the base map
 
 Sampling is stratified on JEV p. That does not bias the fit, because the maps
@@ -18,6 +22,7 @@ queue should not be the only source: they are concentrated on hard cases.
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import math
 import random
@@ -25,13 +30,15 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ragas_jev.judge import questions as Q
+from ragas_jev.judge.base import Judge, JudgeQuestion
 from ragas_jev.privacy.pii_guard import PiiMasker, mask_sample
 from ragas_jev.schemas import RagSample, SampleResult
 from ragas_jev.scoring.calibration import Calibrator, IsotonicMap, fit_isotonic
 
 SHEET_COLUMNS = [
     "sample_id", "metric", "unit_id", "question_id", "lang", "jev_p",
-    "question", "unit_text", "evidence", "label",
+    "question", "unit_text", "evidence", "label", "llm_p", "llm_label",
 ]
 _QUESTION_HINT = {
     "chunk_relevance": "Does the passage (evidence) contain information that answers the question?",
@@ -102,6 +109,74 @@ def sample_units(
                 }
             )
     return rows
+
+
+def _prelabel_request(question_id: str, sample: RagSample, rows: list[dict]) -> tuple[dict, list[JudgeQuestion]] | None:
+    """The state and questions an LLM judge needs for one sample's rows of one question."""
+    family = question_id.split(".")[0]
+    if family == "chunk_relevance":
+        state = {"question": sample.question, "contexts": sample.contexts}
+        if question_id == Q.CHUNK_RELEVANCE_V3 and sample.reference:
+            state["reference"] = sample.reference
+        questions = [Q.chunk_relevance(r["unit_id"], int(r["unit_id"].rsplit("_", 1)[-1]), question_id) for r in rows]
+    elif family == "claim_support":
+        state = {"contexts": sample.contexts}
+        questions = [Q.claim_support(r["unit_id"], r["unit_text"], question_id) for r in rows]
+    elif family == "ref_claim_coverage":
+        state = {"contexts": sample.contexts}
+        questions = [Q.ref_claim_coverage(r["unit_id"], r["unit_text"], question_id) for r in rows]
+    elif family == "statement_relevance":
+        state = {"question": sample.question, "answer": sample.answer}
+        questions = [Q.statement_relevance(r["unit_id"], r["unit_text"], question_id) for r in rows]
+    else:
+        return None
+    return state, questions
+
+
+async def prelabel(
+    rows: list[dict],
+    samples: dict[str, RagSample],
+    judge: Judge,
+    *,
+    pii_masking: bool = False,
+    concurrency: int = 4,
+) -> int:
+    """Fill `llm_p` / `llm_label` of sheet rows with an LLM judge's verdict; returns failures.
+
+    Sends the same (optionally masked) text as the sheet to the judge, one request
+    per sample and question. `label` is left for a person.
+    """
+    masked = {sid: mask_sample(s)[0] if pii_masking else s for sid, s in samples.items()}
+    groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for row in rows:
+        if row["sample_id"] in masked:
+            groups[(row["sample_id"], row["question_id"])].append(row)
+    semaphore = asyncio.Semaphore(concurrency)
+    failures = 0
+
+    async def run(sample_id: str, question_id: str, group: list[dict]) -> None:
+        nonlocal failures
+        request = _prelabel_request(question_id, masked[sample_id], group)
+        if request is None:
+            failures += len(group)
+            return
+        state, questions = request
+        async with semaphore:
+            try:
+                result = await judge.evaluate(state, questions)
+            except Exception:  # noqa: BLE001 - a failed request only leaves its rows unlabeled
+                failures += len(group)
+                return
+        for row in group:
+            answer = result.answers.get(row["unit_id"])
+            if answer is None or answer.noul is None:
+                failures += 1
+                continue
+            row["llm_p"] = f"{answer.noul:.4f}"
+            row["llm_label"] = "1" if answer.noul >= 0.5 else "0"
+
+    await asyncio.gather(*(run(sid, qid, g) for (sid, qid), g in groups.items()))
+    return failures
 
 
 def write_sheet(rows: list[dict], path: Path) -> None:
@@ -194,6 +269,7 @@ def fit_calibration(
 ) -> tuple[Calibrator, FitReport]:
     """New maps per question × language; keys under `min_labels` keep the base map."""
     maps: dict[str, IsotonicMap] = dict(base.maps) if base else {}
+    priors: dict[str, float] = dict(base.priors) if base else {}
     report = FitReport()
     by_key: dict[tuple[str, str], list[LabeledUnit]] = defaultdict(list)
     for u in units:
@@ -218,6 +294,7 @@ def fit_calibration(
         else:
             entry.ece_new_cv = _ece(_cross_validated(group, folds, seed), ys)
             maps[key] = fit_isotonic(raw, ys)
+            priors[key] = entry.positive_rate
             entry.fitted = True
         report.keys.append(entry)
-    return Calibrator(maps, source=source), report
+    return Calibrator(maps, source=source, priors=priors), report

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0 (2026-09-27)
+
+### 추가
+
+- **`ragas-jev calibration adapt`**: 라벨 없이, 평가 결과의 JEV 확률만으로 보정 곡선을 그 데이터의 "예" 비율에 맞춥니다(prior shift, EM). 결과는 일반 보정 파일과 형식이 같아 `evaluate --calibration`에 그대로 씁니다. 검증: [자동 보정 검증 리포트](docs/reports/auto_calibration.md)
+- **`calibration sample --prelabel`**: LLM 판정(`--prelabel-model`, 기본 `RAGAS_JEV_STRONG_JUDGE_MODEL`)을 라벨 시트의 `llm_p`, `llm_label` 열에 참고용으로 채웁니다. `label`은 비워 두며, `fit`은 `label`만 읽습니다
+- **보정 파일의 `priors`**: 곡선을 학습한 데이터의 "예" 비율을 문항 × 언어별로 저장합니다. `calibration fit`이 기록하고, 패키지 기본 보정 파일에도 추가했습니다(곡선은 그대로)
+- **비율 차이 안내**: `evaluate`에서 보정을 켜면, 추정 비율이 보정 데이터와 0.15 이상 다른 문항을 알려 줍니다
+
+### 변경
+
+- 라벨 시트에 `llm_p`, `llm_label` 열이 추가됐습니다. 기존 시트도 그대로 읽힙니다
+
 ## 0.2.0 (2026-09-26)
 
 ### 동작이 바뀐 것 (업그레이드 전 확인)

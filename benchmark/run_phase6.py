@@ -6,6 +6,7 @@ Systems, all scored per sample on the same data:
   jev       this pipeline, JEV only (raw probabilities, no routing)
   hybrid    JEV + calibration + per-metric routing (DEFAULT_METRIC_POLICIES). Calibration
             values are the Phase 5 out-of-fold ones, so no sample is scored with a map fitted on it.
+  hybrid_raw  the 0.2.0 defaults: no calibration, the same routing policies on raw JEV confidence
 
 Sample-level ground truth:
   context_precision  MIRACL human labels: fraction of judged passages that are relevant
@@ -37,7 +38,8 @@ from ragas_jev.audit.router import DEFAULT_METRIC_POLICIES  # noqa: E402
 from ragas_jev.schemas import SampleResult  # noqa: E402
 
 OUT = Path(".cache/phase6")
-SYSTEMS = ("ragas", "llm", "jev", "hybrid")
+SYSTEMS = ("ragas", "llm", "jev", "hybrid", "hybrid_raw")
+HYBRIDS = ("hybrid", "hybrid_raw")
 RAGAS_METRIC = {"context_precision": "context_relevance", "faithfulness": "faithfulness", "context_recall": "context_recall"}
 
 
@@ -56,33 +58,42 @@ def load_ragas(metric: str, datasets: list[str]) -> dict[str, dict]:
 
 
 def unit_systems(metric: str, md) -> tuple[dict[str, dict[str, float]], dict[str, float], dict]:
-    """Per-sample scores for llm / jev / hybrid from the unit table, plus hybrid routing stats."""
+    """Per-sample scores for llm / jev / hybrid / hybrid_raw from the unit table, plus routing stats.
+
+    `routing` keeps the calibrated hybrid's numbers at the top level (as before) and
+    adds `by_system` with both hybrids.
+    """
     units = [u for u in md.units if all(r in u.p for r in ("jev", "auditor", "strong"))]
     cal = cross_calibrate(units)
     policy = DEFAULT_METRIC_POLICIES[metric]
-    finals: dict[str, dict[str, list[float]]] = {s: defaultdict(list) for s in ("llm", "jev", "hybrid")}
-    called: dict[str, set[str]] = defaultdict(set)
-    escalated = 0
+    finals: dict[str, dict[str, list[float]]] = {s: defaultdict(list) for s in ("llm", "jev", *HYBRIDS)}
+    called: dict[str, dict[str, set[str]]] = {h: defaultdict(set) for h in HYBRIDS}
+    escalated = dict.fromkeys(HYBRIDS, 0)
     for u in units:
         sid = u.key[0]
         finals["llm"][sid].append(u.p["strong"])  # gpt-6-sol with the same question version as JEV
         finals["jev"][sid].append(u.p["jev"])
-        p = cal.get(u.key, u.p["jev"])
-        band = policy.band(max(p, 1 - p))
-        if band == "audit":
-            p, escalated = u.p["auditor"], escalated + 1
-            called[sid].add("audit")
-        elif band == "strong":
-            p, escalated = u.p["strong"], escalated + 1
-            called[sid].add("strong")
-        finals["hybrid"][sid].append(p)
+        for hybrid, p in (("hybrid", cal.get(u.key, u.p["jev"])), ("hybrid_raw", u.p["jev"])):
+            band = policy.band(max(p, 1 - p))
+            if band == "audit":
+                p = u.p["auditor"]
+            elif band == "strong":
+                p = u.p["strong"]
+            if band != "accept":
+                escalated[hybrid] += 1
+                called[hybrid][sid].add(band)
+            finals[hybrid][sid].append(p)
     scores = {s: {sid: _mean(ps) for sid, ps in f.items()} for s, f in finals.items()}
     flags = {s: {sid: any(p < 0.5 for p in ps) for sid, ps in f.items()} for s, f in finals.items()}
     samples = {u.key[0] for u in units}
-    routing = {
-        "escalated_unit_rate": escalated / len(units) if units else 0.0,
-        "llm_calls_per_sample": sum(len(v) for v in called.values()) / len(samples) if samples else 0.0,
+    by_system = {
+        h: {
+            "escalated_unit_rate": escalated[h] / len(units) if units else 0.0,
+            "llm_calls_per_sample": sum(len(v) for v in called[h].values()) / len(samples) if samples else 0.0,
+        }
+        for h in HYBRIDS
     }
+    routing = {**by_system["hybrid"], "by_system": by_system}
     return scores, flags, routing
 
 
@@ -342,7 +353,10 @@ def main() -> None:
 
 def render(report: dict) -> str:
     f = lambda x, d=3: "–" if x is None else f"{x:.{d}f}"
-    names = {"ragas": "RAGAS (ragas 0.4, gpt-6-sol)", "llm": "LLM Judge (gpt-6-sol)", "jev": "JEV만", "hybrid": "Hybrid (보정 + routing)"}
+    names = {
+        "ragas": "RAGAS (ragas 0.4, gpt-6-sol)", "llm": "LLM Judge (gpt-6-sol)", "jev": "JEV만",
+        "hybrid": "Hybrid (보정 + routing)", "hybrid_raw": "Hybrid 0.2.0 기본값 (보정 없음 + routing)",
+    }
     m = report["metrics"]
     out = []
 
@@ -417,11 +431,16 @@ def render(report: dict) -> str:
                 )
 
     out.append("\n#### Hybrid routing 비용과 RAGAS 지연\n")
-    out.append("| metric | Hybrid 재판정 unit 비율 | Hybrid 샘플당 LLM 호출 | RAGAS 샘플당 p50 / p95 지연(s) | RAGAS 오류 |")
-    out.append("|---|---|---|---|---|")
+    out.append("| metric | Hybrid 재판정 unit 비율 | Hybrid 샘플당 LLM 호출 | 0.2.0 기본값 재판정 unit 비율 | 0.2.0 기본값 샘플당 LLM 호출 | RAGAS 샘플당 p50 / p95 지연(s) | RAGAS 오류 |")
+    out.append("|---|---|---|---|---|---|---|")
     for name in ("context_precision", "faithfulness", "context_recall"):
         r, eff = m[name]["routing"], report["ragas_efficiency"][name]
-        out.append(f"| {name} | {r['escalated_unit_rate'] * 100:.1f}% | {r['llm_calls_per_sample']:.2f} | {f(eff['latency_p50'], 1)} / {f(eff['latency_p95'], 1)} | {m[name]['errors']['ragas']} |")
+        raw = r["by_system"]["hybrid_raw"]
+        out.append(
+            f"| {name} | {r['escalated_unit_rate'] * 100:.1f}% | {r['llm_calls_per_sample']:.2f} "
+            f"| {raw['escalated_unit_rate'] * 100:.1f}% | {raw['llm_calls_per_sample']:.2f} "
+            f"| {f(eff['latency_p50'], 1)} / {f(eff['latency_p95'], 1)} | {m[name]['errors']['ragas']} |"
+        )
     return "\n".join(out)
 
 

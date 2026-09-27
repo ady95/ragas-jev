@@ -1,0 +1,7 @@
+# Reversed left jaw profiles
+
+Edited with built-in image_gen from `ragas-jev-logo-inside-jaws.png`. Output: `ragas-jev-logo-inside-jaws-v2.png`. Earlier images preserved.
+
+## Final prompt
+
+Use case: precise-object-edit. Make exactly one localized change to the attached logo: REVERSE THE VERTICAL ORIENTATION OF BOTH SMALL LEFTWARD JAW PROTRUSIONS. User says their direction is reversed. Individually mirror each left triangle top-to-bottom in its current location. Upper blue left protrusion currently has a horizontal top edge and sloping underside: change it to a sloping/curved TOP edge rising toward the vertical beam, with a straight horizontal BOTTOM edge. Lower teal left protrusion currently has sloping top and horizontal bottom: change it to a straight horizontal TOP edge and sloping/curved BOTTOM edge descending toward the beam. Two slim tapered pointed blades like original analog caliper internal-diameter jaws, for inserting into the inside of a drinking glass. Exactly TWO left blades, one attached to fixed head, one to slider. Preserve their positions and lengths, simply reverse each blade's vertical silhouette. Do NOT change the right-facing external measuring jaws around R. Preserve exact "RAGAS-JEV" navy wordmark, all typography and positioning, blue-teal palette, ticks, slider, tail hole, canvas size, and genuine transparent alpha background. No extra text, cups, arrows, or diagrams.

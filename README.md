@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/ragas-jev-logo-measuring-ragas.png" alt="RAGAS-JEV — 버니어캘리퍼스로 RAGAS 글자의 가로 폭을 측정하여 더 정밀한 평가를 상징하는 로고" width="640" />
+  <img src="https://raw.githubusercontent.com/ady95/ragas-jev/main/docs/assets/ragas-jev-logo-inside-jaws-v2.png" alt="RAGAS-JEV — 왼쪽의 버니어캘리퍼스로 첫 글자 R의 세로 높이를 측정하는 로고" width="640" />
 </p>
 
 <p align="center">
@@ -181,7 +181,7 @@ ragas-jev evaluate --help
 
 ## 평가 지표
 
-![RAGAS-JEV의 네 가지 평가 지표와 판정 신뢰도](docs/assets/ragas-jev-evaluation-infographic.png)
+![RAGAS-JEV의 네 가지 평가 지표와 판정 신뢰도](https://raw.githubusercontent.com/ady95/ragas-jev/main/docs/assets/ragas-jev-evaluation-infographic.png)
 
 평가 방식과 비교 조건은 [평가 항목 상세 문서](https://github.com/ady95/ragas-jev/blob/main/docs/ragas-jev_평가항목.md)를 참고하세요.
 
@@ -206,10 +206,17 @@ ragas-jev review export -i results/sample.jsonl -o results/review.csv
 ragas-jev review import -i results/sample.jsonl -l results/review.csv -o results/reviewed.jsonl
 ```
 
+라벨이 없어도 `calibration adapt`로 기본 보정을 평가 데이터의 라벨 비율에 맞출 수 있습니다. 평가 결과의 JEV 확률만 사용하며, 추가 API 호출이 없습니다.
+
+```bash
+ragas-jev calibration adapt -r results/out.jsonl -o results/adapted.json
+ragas-jev evaluate -i data.jsonl -o results/adapted_run.jsonl --calibration results/adapted.json
+```
+
 새로운 서비스 도메인에서는 라벨을 수집해 확률 보정을 다시 학습할 수 있습니다. 아래 `data.jsonl`과 `results/out.jsonl`은 도메인 데이터와 해당 데이터의 평가 결과입니다.
 
 ```bash
-ragas-jev calibration sample -r results/out.jsonl -s data.jsonl -o results/label_sheet.csv
+ragas-jev calibration sample -r results/out.jsonl -s data.jsonl -o results/label_sheet.csv   # --prelabel: LLM 판정을 참고용으로 미리 채움
 # label 열을 작성한 뒤 실행
 ragas-jev calibration fit -l results/label_sheet.csv -o results/domain_calibration.json
 ragas-jev evaluate -i data.jsonl -o results/recalibrated.jsonl --calibration results/domain_calibration.json

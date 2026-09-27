@@ -1,4 +1,4 @@
-"""Command-line entry point: `ragas-jev init | healthcheck | evaluate | review | calibration`."""
+"""Command-line entry point: `ragas-jev init | healthcheck | evaluate | review | calibration (sample | fit | adapt)`."""
 
 from __future__ import annotations
 
@@ -26,8 +26,11 @@ from ragas_jev.pipeline import Evaluator
 from ragas_jev.preprocess.base import SentenceSplitExtractor
 from ragas_jev.preprocess.llm_extractor import LlmExtractor
 from ragas_jev.schemas import METRICS, RagSample, SampleResult
+from ragas_jev.scoring.adaptation import AdaptationReport, adapt_calibration
 from ragas_jev.scoring.calibration import Calibrator
-from ragas_jev.scoring.recalibration import fit_calibration, question_hint, read_sheets, sample_units, write_sheet
+from ragas_jev.scoring.recalibration import fit_calibration, prelabel, question_hint, read_sheets, sample_units, write_sheet
+
+PRIOR_SHIFT_WARNING = 0.15  # |estimated - calibration-data "yes" rate| that triggers a note
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 review_app = typer.Typer(add_completion=False, no_args_is_help=True, help="Human review queue")
@@ -182,6 +185,20 @@ def evaluate(
         _evaluate(samples, selected, judge, extractor, concurrency, cache, output, use_audit, calibrator, use_masking)
     )
     _print_summary(results)
+    if calibrator is not None:
+        _warn_prior_shift(results, calibrator, output)
+
+
+def _warn_prior_shift(results: list[SampleResult], calibrator: Calibrator, output: Path) -> None:
+    """Point out keys whose estimated "yes" rate is far from the calibration data's."""
+    _, report = adapt_calibration(results, calibrator, min_units=1)
+    for k in report.large_shifts(PRIOR_SHIFT_WARNING):
+        typer.echo(
+            f"note: {k.key}: estimated yes rate {k.estimated_prior:.2f} vs {k.source_prior:.2f} in the calibration data. "
+            f"The map may not fit this data; try `ragas-jev calibration adapt -r {output} -o adapted.json` "
+            "or domain re-calibration",
+            err=True,
+        )
 
 
 async def _evaluate(
@@ -324,6 +341,8 @@ def calibration_sample(
     per_key: int = typer.Option(300, help="Units per question x language (spread over JEV p)"),
     seed: int = typer.Option(13),
     pii_masking: Optional[bool] = typer.Option(None, "--pii-masking/--no-pii-masking", help="Mask PII in the sheet (default: RAGAS_JEV_PII_MASKING, off)"),
+    prelabel_llm: bool = typer.Option(False, "--prelabel", help="Ask an LLM judge first and fill llm_p / llm_label for a person to confirm (sends the sheet text to the LLM endpoint)"),
+    prelabel_model: Optional[str] = typer.Option(None, help="LLM for --prelabel (default: RAGAS_JEV_STRONG_JUDGE_MODEL)"),
 ) -> None:
     """Write a label sheet for re-calibration (question, unit and evidence text)."""
     settings = get_settings()
@@ -333,6 +352,14 @@ def calibration_sample(
         for s in (RagSample.model_validate_json(l) for l in samples.read_text(encoding="utf-8").splitlines() if l.strip())
     }
     rows = sample_units(_read_results(results), sample_map, per_key=per_key, seed=seed, pii_masking=use_masking)
+    if prelabel_llm:
+        model = prelabel_model or settings.ragas_jev_strong_judge_model
+        if not use_masking:
+            typer.echo("note: PII masking is off; sheet text is sent to the LLM endpoint as is (enable with --pii-masking)", err=True)
+        failures = asyncio.run(_prelabel(rows, sample_map, settings, model, use_masking))
+        done = [r for r in rows if r.get("llm_label")]
+        yes = sum(r["llm_label"] == "1" for r in done)
+        typer.echo(f"prelabeled {len(done)} of {len(rows)} units with {model} ({yes} yes), {failures} failed")
     write_sheet(rows, out)
     counts: dict[str, int] = {}
     for row in rows:
@@ -340,7 +367,17 @@ def calibration_sample(
     typer.echo(f"{len(rows)} units written to {out}")
     for key, n in sorted(counts.items()):
         typer.echo(f"  {key}: {n}  ({question_hint(key.split(':')[0])})")
+    if prelabel_llm:
+        typer.echo("`llm_label` is a suggestion: check it and write your decision in `label` (only `label` is used by fit).")
     typer.echo("Fill `label` with 1 (yes) or 0 (no), then run `ragas-jev calibration fit`.")
+
+
+async def _prelabel(rows: list[dict], sample_map: dict[str, RagSample], settings, model: str, pii_masking: bool) -> int:
+    judge = LlmJudge.from_settings(settings, model=model)
+    try:
+        return await prelabel(rows, sample_map, judge, pii_masking=pii_masking)
+    finally:
+        await judge.aclose()
 
 
 @calibration_app.command("fit")
@@ -368,6 +405,36 @@ def calibration_fit(
         status = "fitted" if k.fitted else k.note
         typer.echo(f"  {k.key} | {k.labels} | {k.positive_rate:.2f} | {fmt(k.ece_raw)} | {fmt(k.ece_base)} | {fmt(k.ece_new_cv)} | {status}")
     typer.echo(f"Use it with `ragas-jev evaluate --calibration {out}` or set RAGAS_JEV_CALIBRATION_FILE={out}")
+
+
+@calibration_app.command("adapt")
+def calibration_adapt(
+    results: Path = typer.Option(..., "--results", "-r", help="Results JSONL from `evaluate` on the data to adapt to (raw JEV p is read, calibrated or not)"),
+    out: Path = typer.Option(..., "--out", "-o", help="Adapted calibration JSON to write"),
+    base: Optional[Path] = typer.Option(None, help="Calibration to adapt (default: RAGAS_JEV_CALIBRATION_FILE, else the packaged one)"),
+    min_units: int = typer.Option(50, help="Minimum units of a question x language to estimate its rate"),
+) -> None:
+    """Adapt calibration maps to this data's label rate, without labels (prior shift)."""
+    settings = get_settings()
+    base_path = base or settings.calibration_path
+    if not base_path.is_file():
+        raise typer.BadParameter(f"calibration file {base_path} does not exist", param_hint="--base")
+    base_cal = Calibrator.load(base_path)
+    calibrator, report = adapt_calibration(
+        _read_results(results), base_cal, min_units=min_units, source=f"{base_cal.source} (prior-adapted to {results.name})"
+    )
+    calibrator.save(out)
+    _print_adaptation(report)
+    typer.echo(f"{sum(k.adapted for k in report.keys)} maps adapted -> {out}")
+    typer.echo(f"Use it with `ragas-jev evaluate --calibration {out}` (JEV answers come from the cache)")
+
+
+def _print_adaptation(report: AdaptationReport) -> None:
+    fmt = lambda x: "-" if x is None else f"{x:.3f}"
+    typer.echo("  key | units | base map | yes rate: calibration data | estimated here | result")
+    for k in report.keys:
+        status = "adapted" if k.adapted else k.note
+        typer.echo(f"  {k.key} | {k.units} | {k.base_key or '-'} | {fmt(k.source_prior)} | {fmt(k.estimated_prior)} | {status}")
 
 
 if __name__ == "__main__":

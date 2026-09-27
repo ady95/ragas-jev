@@ -465,5 +465,16 @@
         0.9494949494949495
       ]
     }
+  },
+  "priors": {
+    "chunk_relevance.v2:*": 0.18302217967129408,
+    "chunk_relevance.v2:en": 0.27149321266968324,
+    "chunk_relevance.v2:ko": 0.13482869115109686,
+    "claim_support.v1:*": 0.8500238435860753,
+    "claim_support.v1:en": 0.8497529787852368,
+    "claim_support.v1:ko": 0.851261620185923,
+    "ref_claim_coverage.v1:*": 0.5345245973968674,
+    "ref_claim_coverage.v1:en": 0.5345986555950969,
+    "ref_claim_coverage.v1:ko": 0.5344311377245509
   }
 }

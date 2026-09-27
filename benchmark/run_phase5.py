@@ -228,7 +228,9 @@ def fit_final(metrics: list[MetricData], model: str) -> Calibrator:
         for lang in sorted({u.lang for u in units}):
             sel = [u for u in units if u.lang == lang]
             cal.maps[f"{md.question_id}:{lang}"] = fit_isotonic([u.p["jev"] for u in sel], [u.y for u in sel])
+            cal.priors[f"{md.question_id}:{lang}"] = sum(u.y for u in sel) / len(sel)
         cal.maps[f"{md.question_id}:*"] = fit_isotonic([u.p["jev"] for u in units], [u.y for u in units])
+        cal.priors[f"{md.question_id}:*"] = sum(u.y for u in units) / len(units)
     return cal
 
 

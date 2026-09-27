@@ -1,6 +1,7 @@
 # Phase 6 벤치마크 리포트: RAGAS vs LLM Judge vs JEV vs Hybrid
 
 - 실행일: 2026-09-24 (후속 비교 2건 추가: reference 기반 Context Precision, RAGAS Answer Relevancy)
+- 2026-09-26: ragas-jev 0.2.0 기본값(보정·PII 마스킹 꺼짐)으로 다시 계산한 결과를 [9절](#9-020-기본값으로-다시-계산-2026-09-26)에 추가
 - 관련 문서: [구현계획서](../구현계획서.md) Phase 6, [설계방향](../RAGAS-JEV_설계방향.md) 17장, Phase [1](phase1_context_precision.md) · [2](phase2_faithfulness.md) · [3](phase3_context_recall.md) · [4](phase4_answer_relevancy.md) · [5](phase5_routing_calibration.md) 리포트, [도메인 재보정 가이드](../도메인_재보정_가이드.md)
 
 ## 1. 요약
@@ -22,6 +23,7 @@
 - Hybrid RAGAS-JEV는 Faithfulness, Answer Relevancy, Context Precision(질문만 보는 경우와 reference를 보는 경우 모두)에서 1위이고, 판정용 LLM 호출은 RAGAS·LLM Judge의 0~40%다. 설계방향 문서의 구조("LLM은 문제를 나누고, JEV는 판단하고, 프로그램은 점수를 계산한다")가 품질과 비용 양쪽에서 성립한다.
 - reference 기반 Context Precision에서 RAGAS가 앞섰던 것은 **reference라는 정보 차이** 때문이었다. JEV에게도 reference를 보여 주는 v3 문항을 쓰면, 한국어는 LLM 호출 없이 RAGAS보다 좋다. v3를 Context Precision 기본 문항으로 바꿨다 (reference가 없으면 v2).
 - Context Recall은 RAGAS가 앞선다. 정답 정의(reference 문장 단위)가 RAGAS 방식에 가깝다.
+- **아래 Hybrid 수치는 보정을 켠 결과다.** 0.2.0 기본값(보정 없음)에서는 Faithfulness AUROC 0.819, reference 없는 Context Precision MAE 0.217 / 0.170 등으로 이득이 줄지만, Faithfulness·Answer Relevancy·Context Precision에서는 여전히 RAGAS보다 낫다 (9절).
 - **보정은 데이터 분포에 의존한다는 것이 실제로 확인됐다.** 관련 passage 비율이 다른 세트에 기본 보정을 쓰면 Hybrid가 가장 나빴고, 그 세트의 라벨로 재보정하면 LLM Judge 수준으로 회복했다. 서비스 도메인에서는 [도메인 재보정](../도메인_재보정_가이드.md)이 필수다.
 
 ## 2. 비교 대상
@@ -291,3 +293,57 @@ uv run --group benchmark --group embeddings python benchmark/run_ragas_baseline.
 ```
 
 `ragas`를 쓰려면 Python 3.12 가상환경이 필요하다 (`scikit-network`가 Windows + Python 3.14용 wheel을 제공하지 않는다). `benchmark` 그룹에서 `langchain-community<0.4`로 고정했다 (ragas 0.4.3이 0.4에서 제거된 모듈을 import한다). Answer Relevancy에는 `embeddings` 그룹(`sentence-transformers`, torch)이 필요하고, 임베딩 모델은 처음 실행할 때 Hugging Face에서 내려받는다.
+
+## 9. 0.2.0 기본값으로 다시 계산 (2026-09-26)
+
+ragas-jev 0.2.0부터 확률 보정과 PII 마스킹이 기본으로 꺼졌다 ([CHANGELOG](../../CHANGELOG.md)). 이 절은 새 기본값으로 쓰는 Hybrid가 위 결과와 얼마나 다른지 다시 계산한 것이다.
+
+### 9.1 방법
+
+- **API 호출 없음.** 1~8절에 쓴 판정(JEV 원래 확률, `gpt-6-luna`·`gpt-6-sol` 판정)을 그대로 쓰고, 보정만 빼고 같은 routing 정책(`DEFAULT_METRIC_POLICIES`)을 원래 확률의 신뢰도에 적용했다. 새 시스템 이름은 `hybrid_raw`, `hybrid_v3_raw`다 ([run_phase6.py](../../benchmark/run_phase6.py), [run_cp_reference.py](../../benchmark/run_cp_reference.py)).
+- 판정이 같으므로 JEV·LLM 응답의 반복 변동이 섞이지 않는다. 차이는 **기본값 변경의 효과만** 보여 준다. 기존 네 시스템의 수치는 1~8절과 한 자리도 다르지 않게 재현됐다.
+- **PII 마스킹은 반영하지 않았다.** 저장된 결과 17,329건 중 마스킹이 일어난 샘플은 62건(0.4%, 모두 계좌번호 패턴에 걸린 긴 숫자)이다. RAGTruth에서는 320건 중 7건이다. 영향은 무시할 수준으로 본다.
+- Answer Relevancy는 원래 보정과 routing이 없어 바뀌지 않는다 (JEV 0.92 / 0.98 / 0.95, 4절).
+
+### 9.2 결과
+
+| 지표 (측정값, 한국어 / 영어) | RAGAS | JEV만 | Hybrid (보정 + routing, 1~8절) | **Hybrid 0.2.0 기본값** | 0.2.0 기본값의 재판정 unit / 샘플당 LLM 호출 |
+|---|---|---|---|---|---|
+| Context Precision, 질문만 (MIRACL Spearman) | 0.111 / 0.253 | 0.621 / 0.544 | **0.681 / 0.567** | 0.601 / 0.542 | 7.5% / 0.53 (보정 시 5.8% / 0.40) |
+| Context Precision, 질문만 (MIRACL MAE) | 0.808 / 0.688 | 0.228 / 0.178 | **0.079 / 0.121** | 0.217 / 0.170 | |
+| Context Precision, 질문만 (전부 무관 세트 평균, 0이 정답) | 0.586 | 0.188 | **0.056** | 0.180 | |
+| Context Precision, reference 사용 (AP Kendall) | 0.459 / 0.518 | v3: 0.518 / 0.523 | v3 재보정: **0.537 / 0.545** | v3: 0.505 / 0.535 | 3.6% / 0.15, 6.2% / 0.27 |
+| Context Precision, reference 사용 (AP MAE) | 0.128 / 0.126 | v3: 0.123 / 0.122 | v3 재보정: **0.117 / 0.115** | v3: 0.123 / 0.118 | |
+| Context Precision, reference 사용 (AP Pearson) | 0.638 / **0.696** | v3: **0.674** / 0.672 | v3 재보정: 0.644 / 0.672 | v3: 0.664 / 0.673 | |
+| Faithfulness (RAGTruth AUROC) | 0.790 | 0.809 | **0.830** | 0.819 | 6.5% / 0.32 (보정 시 8.8% / 0.34) |
+| Faithfulness (RAGTruth P / R / F1) | 0.623 / **0.950** / 0.752 | 0.706 / 0.867 / 0.778 | **0.750** / 0.835 / **0.790** | 0.683 / 0.886 / 0.771 | |
+| Faithfulness (한국어 AUROC) | 0.944 | 0.962 | **0.970** | 0.963 | |
+| Context Recall (Pearson) | **0.909 / 0.944** | 0.878 / 0.920 | 0.903 / 0.938 | 0.878 / 0.920 | 0% (routing 없음) |
+| Context Recall (MAE) | **0.109 / 0.075** | 0.161 / 0.134 | 0.143 / 0.117 | 0.161 / 0.134 | |
+
+reference 기반 Context Precision의 0.2.0 기본값은 v3 문항이다 (reference가 있으면 v3가 기본). v2로 계산한 값은 AP Kendall 0.433 / 0.483이다 (`cp_reference_tables_020.md`).
+
+### 9.3 해석
+
+- **기본값을 바꾸면 보정이 주던 이득이 사라진다. 그래도 RAGAS보다는 Faithfulness, Answer Relevancy, Context Precision에서 여전히 낫다.**
+  - Faithfulness AUROC 0.819, F1 0.771로 RAGAS(0.790 / 0.752)보다 높고, LLM Judge(0.821 / 0.764)와 비슷하다. 보정한 Hybrid(0.830 / 0.790)에는 못 미친다.
+  - reference가 있는 Context Precision(v3)은 AP Kendall과 MAE가 두 언어 모두 RAGAS와 같거나 낫고, 판정용 LLM 호출은 RAGAS의 3~5%(샘플당 0.15~0.27회 대 5회)다.
+- **손해가 가장 큰 곳은 reference 없는 Context Precision의 절대 오차다.** MAE가 0.079에서 0.217로, 전부 무관한 세트의 평균 점수가 0.056에서 0.180으로 커졌다. JEV 원래 확률이 "관련" 쪽으로 치우친 것을 보정이 바로잡고 있었기 때문이다. 순위 상관(Spearman 0.601)은 JEV만(0.621)보다도 조금 낮다. 원래 확률에서는 신뢰도 0.60 미만 구간에 다른 unit이 들어와, `gpt-6-sol`로 넘어가는 unit이 늘었는데(7.5%) 순위는 오히려 약간 나빠졌다.
+- **Faithfulness는 재판정이 줄었다** (8.8% → 6.5%). 원래 확률은 "지지" 쪽으로 치우쳐 신뢰도가 높게 나오므로, 애매한 claim이 Auditor로 덜 간다. precision이 0.750에서 0.683으로 떨어지고 recall이 0.835에서 0.886으로 오른 것은 판정 기준이 "hallucination으로 잡는" 쪽으로 옮겨 간 결과다.
+- **Context Recall은 RAGAS와의 격차가 커진다** (Pearson 차이 0.006 → 0.031 / 0.024). 이 데이터에서는 보정이 도움이 됐다. 보정 학습 데이터와 평가 데이터가 같은 분포이기 때문이다 (질문 단위 교차 검증). 분포가 다른 bench40(참고코드의 별도 실험)에서는 반대로 보정이 크게 손해였다. 보정의 효과는 분포 일치 여부에 달려 있다는 5.1절·6절의 결론과 같다.
+- **Answer Relevancy는 그대로 1위다.**
+
+### 9.4 권장
+
+| 상황 | 권장 설정 |
+|---|---|
+| 평가 데이터가 기본 보정의 학습 데이터(공개 Wikipedia·웹 QA)와 비슷함 | `--calibrate`. 1~8절의 Hybrid 성능을 기대할 수 있다 |
+| 서비스 도메인이고 라벨이 없음 | 0.2.0 기본값(보정 없음). 절대 점수보다 순위 비교에 쓰고, reference가 있으면 v3 문항 덕분에 Context Precision이 RAGAS 수준 이상이다 |
+| 서비스 도메인 라벨이 있음 | [도메인 재보정](../도메인_재보정_가이드.md) 후 `--calibration 파일`. reference 기반 Context Precision에서 재보정 Hybrid v3가 가장 좋았다 (4.1절) |
+
+재현:
+
+```bash
+uv run python benchmark/run_phase6.py > .cache/phase6/tables_020.md          # hybrid_raw 포함
+uv run python benchmark/run_cp_reference.py > .cache/phase6/cp_reference_tables_020.md   # hybrid_raw, hybrid_v3_raw 포함
+```

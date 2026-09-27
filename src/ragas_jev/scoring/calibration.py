@@ -80,13 +80,27 @@ def fit_isotonic(ps: list[float], ys: list[int], *, clip: float = 0.01) -> Isoto
 
 @dataclass
 class Calibrator:
-    """Maps keyed by "<question_id>:<lang>"; "<question_id>:*" is the language fallback."""
+    """Maps keyed by "<question_id>:<lang>"; "<question_id>:*" is the language fallback.
+
+    `priors` holds, per key, the share of "yes" labels in the data a map was fitted on.
+    Isotonic maps learn that base rate, so prior-shift adaptation
+    (ragas_jev.scoring.adaptation) needs it. Files written before 0.3 have no priors.
+    """
 
     maps: dict[str, IsotonicMap] = field(default_factory=dict)
     source: str = ""
+    priors: dict[str, float] = field(default_factory=dict)
+
+    def resolve(self, question_id: str, lang: str) -> str | None:
+        """The key that `lookup` would use."""
+        for key in (f"{question_id}:{lang}", f"{question_id}:*"):
+            if key in self.maps:
+                return key
+        return None
 
     def lookup(self, question_id: str, lang: str) -> IsotonicMap | None:
-        return self.maps.get(f"{question_id}:{lang}") or self.maps.get(f"{question_id}:*")
+        key = self.resolve(question_id, lang)
+        return self.maps[key] if key else None
 
     def apply(self, decision: Decision, lang: str) -> Decision:
         """Calibrate a Noul decision in place of its p; other primitives pass through."""
@@ -110,10 +124,16 @@ class Calibrator:
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {"source": self.source, "maps": {k: m.to_dict() for k, m in sorted(self.maps.items())}}
+        data: dict = {"source": self.source, "maps": {k: m.to_dict() for k, m in sorted(self.maps.items())}}
+        if self.priors:
+            data["priors"] = {k: self.priors[k] for k in sorted(self.priors)}
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @classmethod
     def load(cls, path: Path) -> Calibrator:
         data = json.loads(path.read_text(encoding="utf-8"))
-        return cls({k: IsotonicMap.from_dict(v) for k, v in data["maps"].items()}, data.get("source", ""))
+        return cls(
+            {k: IsotonicMap.from_dict(v) for k, v in data["maps"].items()},
+            data.get("source", ""),
+            {k: float(v) for k, v in data.get("priors", {}).items()},
+        )
