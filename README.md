@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ady95/ragas-jev/main/docs/assets/ragas-jev-logo-inside-jaws-v2.png" alt="RAGAS-JEV — 왼쪽의 버니어캘리퍼스로 첫 글자 R의 세로 높이를 측정하는 로고" width="640" />
+  <img src="https://raw.githubusercontent.com/ady95/ragas-jev/main/docs/assets/ragas-jev-logo.png" alt="RAGAS-JEV — 정밀한 평가를 상징하는 버니어캘리퍼스 로고" width="640" />
 </p>
 
 <p align="center">
